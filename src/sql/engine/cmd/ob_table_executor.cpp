@@ -21,6 +21,7 @@
 #include "share/ob_server_struct.h"
 #include "sql/engine/cmd/ob_table_executor.h"
 #include "share/inner_table/ob_inner_table_schema.h"
+#include "share/ob_dml_sql_splicer.h"
 #include "query/command/ob_root_command_service.h"
 #include "query/command/ob_root_service_serialization.h"
 #include "query/runtime/ob_query_runtime_environment.h"
@@ -536,16 +537,17 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
     const ObAiColumnDef &def = defs.at(i);
     ObSqlString sql;
     int64_t affected_rows = 0;
-    if (OB_FAIL(sql.append_fmt(
-            "INSERT INTO %s (gmt_create, gmt_modified, table_id, column_id, column_name, "
-            "max_retries, state_column_id, request_column_id, result_spec_column_id, normalized_expr, raw_expr, dependency_columns) "
-            "VALUES (now(6), now(6), %lu, %lu, '%.*s', %ld, %lu, %lu, %lu, '%.*s', '%.*s', '%.*s')",
-            OB_ALL_AI_COLUMN_TNAME, table_id, def.column_id_,
-            def.column_name_.length(), def.column_name_.ptr(), def.max_retries_,
-            def.state_column_id_, def.request_column_id_, def.result_spec_column_id_,
-            def.normalized_expr_.length(), def.normalized_expr_.ptr(),
-            def.raw_expr_.length(), def.raw_expr_.ptr(),
-            def.dependency_columns_.length(), def.dependency_columns_.ptr()))) {
+    ObDMLSqlSplicer splicer;
+    if (OB_FAIL(splicer.add_pk_column("table_id", table_id))) {
+    } else if (OB_FAIL(splicer.add_pk_column("column_id", def.column_id_))) {
+    } else if (OB_FAIL(splicer.add_column("column_name", def.column_name_))) {
+    } else if (OB_FAIL(splicer.add_column("max_retries", def.max_retries_))) {
+    } else if (OB_FAIL(splicer.add_column("state_column_id", static_cast<int64_t>(def.state_column_id_)))) {
+    } else if (OB_FAIL(splicer.add_column("request_column_id", static_cast<int64_t>(def.request_column_id_)))) {
+    } else if (OB_FAIL(splicer.add_column("result_spec_column_id", static_cast<int64_t>(def.result_spec_column_id_)))) {
+    } else if (OB_FAIL(splicer.add_column("normalized_expr", def.normalized_expr_))) {
+    } else if (OB_FAIL(splicer.add_column("dependency_columns", def.dependency_columns_))) {
+    } else if (OB_FAIL(splicer.splice_insert_sql(OB_ALL_AI_COLUMN_TNAME, sql))) {
     } else if (OB_FAIL(sql_proxy->write(sql.ptr(), affected_rows))) {
       LOG_WARN("failed to write ai column metadata", K(ret), K(sql));
     }
