@@ -546,6 +546,7 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
     } else if (OB_FAIL(splicer.add_column("request_column_id", static_cast<int64_t>(def.request_column_id_)))) {
     } else if (OB_FAIL(splicer.add_column("result_spec_column_id", static_cast<int64_t>(def.result_spec_column_id_)))) {
     } else if (OB_FAIL(splicer.add_column("normalized_expr", def.normalized_expr_))) {
+    } else if (OB_FAIL(splicer.add_column("raw_expr", ObHexEscapeSqlStr(def.raw_expr_)))) {
     } else if (OB_FAIL(splicer.add_column("dependency_columns", def.dependency_columns_))) {
     } else if (OB_FAIL(splicer.splice_insert_sql(OB_ALL_AI_COLUMN_TNAME, sql))) {
     } else if (OB_FAIL(sql_proxy->write(sql.ptr(), affected_rows))) {

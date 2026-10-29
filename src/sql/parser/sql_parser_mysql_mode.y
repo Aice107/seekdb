@@ -4883,6 +4883,14 @@ column_definition_ref data_type opt_column_attribute_list opt_column_reference o
   merge_nodes(attributes, result, T_COLUMN_ATTRIBUTES, $3);
   set_data_type_collation($2, attributes, false, true);
   malloc_non_terminal_node(ai_column_node, result->malloc_pool_, T_AI_COLUMN, 2, $7, $9);
+  if (OB_NOT_NULL(ai_column_node) && OB_NOT_NULL(result->input_sql_)
+      && @7.last_column >= @7.first_column) {
+    int64_t start_pos = @7.first_column - 1;
+    int64_t expr_len = @7.last_column - @7.first_column + 1;
+    ai_column_node->str_value_ = parse_strndup(result->input_sql_ + start_pos, expr_len,
+                                               result->malloc_pool_);
+    ai_column_node->str_len_ = (OB_NOT_NULL(ai_column_node->str_value_) ? expr_len : 0);
+  }
   malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_DEFINITION, 5, $1, $2, attributes, $11, ai_column_node);
 }
 ;
