@@ -2470,6 +2470,31 @@ all_ai_column_def = dict(
 )
 def_table_schema(**all_ai_column_def)
 
+all_ai_column_task_def = dict(
+    owner = 'oceanbase',
+    table_name = '__all_ai_column_task',
+    table_id = '1132',
+    table_type = 'SYSTEM_TABLE',
+    gm_columns = ['gmt_create', 'gmt_modified'],
+    rowkey_columns = [
+      ('task_id', 'int')
+    ],
+
+    is_cluster_private = False,
+    meta_record_in_sys = False,
+    normal_columns = [
+        ('table_id', 'int', 'false'),
+        ('column_id', 'int', 'false'),
+        ('rowkey_predicate', 'varchar:512', 'false'),
+        ('eligible_ts', 'timestamp', 'false'),
+        ('state', 'int', 'true'),
+        ('retry_count', 'int', 'true'),
+        ('request_id', 'varchar:128', 'true'),
+        ('result', 'varchar:4096', 'true')
+    ]
+)
+def_table_schema(**all_ai_column_task_def)
+
 
 all_objauth_mysql_def = dict(
     owner = 'cjl476581',
