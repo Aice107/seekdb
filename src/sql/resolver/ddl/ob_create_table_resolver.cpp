@@ -696,6 +696,14 @@ int ObCreateTableResolver::resolve_ai_column(share::schema::ObColumnSchemaV2 &re
       max_retries = parse_ai_max_retries(opts);
     }
     def.max_retries_ = max_retries;
+    if (OB_NOT_NULL(ai_node->str_value_) && ai_node->str_len_ > 0) {
+      ObString raw_expr;
+      if (OB_FAIL(ob_write_string(*allocator_, ObString(static_cast<int32_t>(ai_node->str_len_),
+                                                        ai_node->str_value_), raw_expr))) {
+      } else {
+        def.raw_expr_ = raw_expr;
+      }
+    }
     ParseNode *ai_expr = ai_node->children_[0];
     if (OB_NOT_NULL(ai_expr) && ai_expr->num_child_ >= 2) {
       ParseNode *name_node = ai_expr->children_[0];

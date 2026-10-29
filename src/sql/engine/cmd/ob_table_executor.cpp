@@ -538,12 +538,13 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
     int64_t affected_rows = 0;
     if (OB_FAIL(sql.append_fmt(
             "INSERT INTO %s (gmt_create, gmt_modified, table_id, column_id, column_name, "
-            "max_retries, state_column_id, request_column_id, result_spec_column_id, normalized_expr) "
-            "VALUES (now(6), now(6), %lu, %lu, '%.*s', %ld, %lu, %lu, %lu, '%.*s')",
+            "max_retries, state_column_id, request_column_id, result_spec_column_id, normalized_expr, raw_expr) "
+            "VALUES (now(6), now(6), %lu, %lu, '%.*s', %ld, %lu, %lu, %lu, '%.*s', '%.*s')",
             OB_ALL_AI_COLUMN_TNAME, table_id, def.column_id_,
             def.column_name_.length(), def.column_name_.ptr(), def.max_retries_,
             def.state_column_id_, def.request_column_id_, def.result_spec_column_id_,
-            def.normalized_expr_.length(), def.normalized_expr_.ptr()))) {
+            def.normalized_expr_.length(), def.normalized_expr_.ptr(),
+            def.raw_expr_.length(), def.raw_expr_.ptr()))) {
     } else if (OB_FAIL(sql_proxy->write(sql.ptr(), affected_rows))) {
       LOG_WARN("failed to write ai column metadata", K(ret), K(sql));
     }
