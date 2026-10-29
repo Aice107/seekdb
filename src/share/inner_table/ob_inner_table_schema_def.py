@@ -2466,7 +2466,8 @@ all_ai_column_def = dict(
         ('request_column_id', 'int', 'false'),
         ('result_spec_column_id', 'int', 'false'),
         ('normalized_expr', 'varchar:4096', 'true'),
-        ('raw_expr', 'varchar:4096', 'true')
+        ('raw_expr', 'varchar:4096', 'true'),
+        ('dependency_columns', 'varchar:4096', 'true')
     ]
 )
 def_table_schema(**all_ai_column_def)

@@ -43,6 +43,7 @@ struct ObAiColumnDef
   int64_t max_retries_;
   common::ObString normalized_expr_;
   common::ObString raw_expr_;
+  common::ObString dependency_columns_;
   TO_STRING_KV(K_(column_name), K_(column_id), K_(state_column_id),
                K_(request_column_id), K_(result_spec_column_id),
                K_(max_retries), K_(normalized_expr));

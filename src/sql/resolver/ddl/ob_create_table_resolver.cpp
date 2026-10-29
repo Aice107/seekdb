@@ -651,6 +651,21 @@ static void collect_ai_column_options(const ParseNode *node, int64_t &max_retrie
   }
 }
 
+static void collect_ai_dependency_columns(const ParseNode *node, ObSqlString &buf)
+{
+  if (OB_NOT_NULL(node)) {
+    if (T_COLUMN_REF == node->type_ && node->num_child_ >= 3 && OB_NOT_NULL(node->children_[2])) {
+      const ParseNode *name = node->children_[2];
+      if (OB_NOT_NULL(name) && OB_NOT_NULL(name->str_value_)) {
+        buf.append_fmt("%.*s,", static_cast<int32_t>(name->str_len_), name->str_value_);
+      }
+    }
+    for (int32_t i = 0; i < node->num_child_; ++i) {
+      collect_ai_dependency_columns(node->children_[i], buf);
+    }
+  }
+}
+
 static bool expr_refs_ai_column(const ParseNode *node, const ObIArray<ObAiColumnDef> &defs)
 {
   bool found = false;
@@ -741,6 +756,19 @@ int ObCreateTableResolver::resolve_ai_column(share::schema::ObColumnSchemaV2 &re
         && expr_refs_ai_column(ai_expr, create_table_stmt->get_ai_column_defs())) {
       ret = OB_NOT_SUPPORTED;
     }
+    if (OB_SUCC(ret) && OB_NOT_NULL(ai_expr)) {
+      ObSqlString dep_buf;
+      collect_ai_dependency_columns(ai_expr, dep_buf);
+      ObString dep_str = dep_buf.string();
+      if (!dep_str.empty()) {
+        dep_str.assign_ptr(dep_str.ptr(), dep_str.length() > 0 ? dep_str.length() - 1 : 0);
+        ObString dep_copy;
+        if (OB_FAIL(ob_write_string(*allocator_, dep_str, dep_copy))) {
+        } else {
+          def.dependency_columns_ = dep_copy;
+        }
+      }
+    }
     if (OB_FAIL(ret)) {
     } else if (result_col.is_json()) {
       const char *suffix = " Return exactly one valid JSON value";
@@ -766,6 +794,9 @@ int ObCreateTableResolver::resolve_ai_column(share::schema::ObColumnSchemaV2 &re
       hidden_col.set_column_name(hidden_name);
       if (0 == i) {
         hidden_col.set_data_type(ObIntType);
+        ObObj pending_default;
+        pending_default.set_int(static_cast<int64_t>(1));
+        hidden_col.set_cur_default_value(pending_default, false);
       } else {
         hidden_col.set_data_type(ObLongTextType);
         hidden_col.set_collation_type(CS_TYPE_UTF8MB4_BIN);
