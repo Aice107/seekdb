@@ -3459,6 +3459,47 @@ int ObAlterTableResolver::resolve_add_column(const ParseNode &node, ObColumnName
           } else if (FALSE_IT(alter_table_stmt->set_sql_mode(session_info_->get_sql_mode()))) {
           }
         }
+        if (OB_SUCC(ret)) {
+          ParseNode *col_def = node.children_[i];
+          if (OB_NOT_NULL(col_def) && col_def->num_child_ > 4
+              && OB_NOT_NULL(col_def->children_[4])
+              && T_AI_COLUMN == col_def->children_[4]->type_) {
+            ObAiColumnDef def;
+            def.column_name_ = alter_column_schema.get_column_name_str();
+            ParseNode *ai_node = col_def->children_[4];
+            ParseNode *opt_node = ai_node->children_[1];
+            if (OB_NOT_NULL(opt_node) && opt_node->str_len_ > 0) {
+              ObString opts(static_cast<int32_t>(opt_node->str_len_), opt_node->str_value_);
+              const char *p = opts.ptr();
+              const int64_t len = opts.length();
+              for (int64_t k = 0; k + 11 <= len; ++k) {
+                if (0 == strncasecmp(p + k, "max_retries", 11)) {
+                  const char *q = p + k + 11;
+                  const char *end = p + len;
+                  while (q < end && (' ' == *q || '=' == *q || '\t' == *q)) {
+                    ++q;
+                  }
+                  int64_t v = 0;
+                  bool found = false;
+                  while (q < end && *q >= '0' && *q <= '9') {
+                    v = v * 10 + (*q - '0');
+                    ++q;
+                    found = true;
+                  }
+                  if (found) {
+                    def.max_retries_ = v;
+                  }
+                  break;
+                }
+              }
+            }
+            if (alter_column_schema.is_json()) {
+              def.normalized_expr_ = ObString::make_string(" Return exactly one valid JSON value");
+            }
+            if (OB_FAIL(alter_table_stmt->get_ai_column_defs().push_back(def))) {
+            }
+          }
+        }
       }
     }
     add_column_cnt_++;

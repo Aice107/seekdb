@@ -19,6 +19,7 @@
 
 
 #include "sql/resolver/ddl/ob_table_stmt.h"
+#include "sql/resolver/ddl/ob_create_table_stmt.h"
 #include "sql/resolver/ddl/ob_ddl_stmt.h"
 #include "sql/resolver/ob_stmt_resolver.h"
 #include "common/sql_mode/ob_sql_mode.h"
@@ -114,6 +115,10 @@ private:
   obcall::ObAlterTriggerArg tg_arg_;
   uint64_t alter_table_action_count_;
   obcall::ObExchangePartitionArg exchange_partition_arg_;
+  common::ObSEArray<ObAiColumnDef, 4> ai_column_defs_;
+public:
+  common::ObSEArray<ObAiColumnDef, 4> &get_ai_column_defs() { return ai_column_defs_; }
+  const common::ObSEArray<ObAiColumnDef, 4> &get_ai_column_defs() const { return ai_column_defs_; }
 };
 
 inline int ObAlterTableStmt::set_tz_info_wrap(const common::ObTimeZoneInfoWrap &tz_info_wrap)

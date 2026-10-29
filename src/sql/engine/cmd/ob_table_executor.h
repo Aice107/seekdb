@@ -93,6 +93,7 @@ public:
   int set_index_arg_list(ObExecContext &ctx, ObCreateTableStmt &stmt);
   int execute_ctas(ObExecContext &ctx, ObCreateTableStmt &stmt);
 private:
+  int insert_ai_column_metadata(ObExecContext &ctx, ObCreateTableStmt &stmt, uint64_t table_id);
   int prepare_stmt(ObCreateTableStmt &stmt, const ObSQLSessionInfo &my_session, ObString &create_table_name);
   int prepare_ins_arg(ObCreateTableStmt &stmt,
                       const ObSQLSessionInfo *my_session,

@@ -26,6 +26,27 @@ namespace oceanbase
 namespace sql
 {
 
+struct ObAiColumnDef
+{
+  ObAiColumnDef()
+    : column_id_(common::OB_INVALID_ID),
+      state_column_id_(common::OB_INVALID_ID),
+      request_column_id_(common::OB_INVALID_ID),
+      result_spec_column_id_(common::OB_INVALID_ID),
+      max_retries_(0)
+  {}
+  common::ObString column_name_;
+  uint64_t column_id_;
+  uint64_t state_column_id_;
+  uint64_t request_column_id_;
+  uint64_t result_spec_column_id_;
+  int64_t max_retries_;
+  common::ObString normalized_expr_;
+  TO_STRING_KV(K_(column_name), K_(column_id), K_(state_column_id),
+               K_(request_column_id), K_(result_spec_column_id),
+               K_(max_retries), K_(normalized_expr));
+};
+
 class ObCreateTableStmt : public ObTableStmt
 {
 public:
@@ -108,6 +129,10 @@ protected:
    3. rename ctas_t1 as t1
    */
   uint64_t insert_mode_;
+  common::ObSEArray<ObAiColumnDef, 4> ai_column_defs_;
+public:
+  common::ObSEArray<ObAiColumnDef, 4> &get_ai_column_defs() { return ai_column_defs_; }
+  const common::ObSEArray<ObAiColumnDef, 4> &get_ai_column_defs() const { return ai_column_defs_; }
 };
 
 inline obcall::ObCreateTableArg &ObCreateTableStmt::get_create_table_arg()

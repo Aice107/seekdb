@@ -4895,6 +4895,7 @@ opt_ai_column_with:
 | WITH '(' vec_index_params ')'
 {
   merge_nodes($$, result, T_VEC_INDEX_PARAMS, $3);
+  dup_expr_string($$, result, @3.first_column, @3.last_column);
 }
 ;
 

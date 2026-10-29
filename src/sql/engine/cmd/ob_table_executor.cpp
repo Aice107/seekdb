@@ -20,6 +20,7 @@
 #include "lib/stat/ob_diagnostic_info_guard.h"
 #include "share/ob_server_struct.h"
 #include "sql/engine/cmd/ob_table_executor.h"
+#include "share/inner_table/ob_inner_table_schema.h"
 #include "query/command/ob_root_command_service.h"
 #include "query/command/ob_root_service_serialization.h"
 #include "query/runtime/ob_query_runtime_environment.h"
@@ -492,6 +493,16 @@ int ObCreateTableExecutor::execute(ObExecContext &ctx, ObCreateTableStmt &stmt)
       if (OB_FAIL(execute_ctas(ctx, stmt))){
       }
     }
+    if (OB_SUCC(ret) && !stmt.get_ai_column_defs().empty()) {
+      uint64_t table_id = res.table_id_;
+      if (0 == table_id || OB_INVALID_ID == table_id) {
+        table_id = create_table_arg.schema_.get_table_id();
+      }
+      if (OB_FAIL(insert_ai_column_metadata(ctx, stmt, table_id))) {
+        LOG_WARN("failed to insert ai column metadata", K(ret), K(table_id));
+      }
+    }
+
     SERVER_EVENT_ADD("ddl", "create table execute finish",
       "ret", ret,
       "trace_id", *ObCurTraceId::get_trace_id(),
@@ -505,6 +516,36 @@ int ObCreateTableExecutor::execute(ObExecContext &ctx, ObCreateTableStmt &stmt)
     if (0 != table_schema.get_session_id()) {
       query::request_query_ctas_cleanup(
           ctx.get_query_runtime_environment());
+    }
+  }
+  return ret;
+}
+
+int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
+                                                     ObCreateTableStmt &stmt,
+                                                     uint64_t table_id)
+{
+  int ret = OB_SUCCESS;
+  ObSQLSessionInfo *session = ctx.get_my_session();
+  ObMySQLProxy *sql_proxy = ctx.get_sql_proxy();
+  const ObSEArray<ObAiColumnDef, 4> &defs = stmt.get_ai_column_defs();
+  if (OB_ISNULL(session) || OB_ISNULL(sql_proxy)) {
+    ret = OB_ERR_UNEXPECTED;
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < defs.count(); ++i) {
+    const ObAiColumnDef &def = defs.at(i);
+    ObSqlString sql;
+    int64_t affected_rows = 0;
+    if (OB_FAIL(sql.append_fmt(
+            "INSERT INTO %s (gmt_create, gmt_modified, table_id, column_id, column_name, "
+            "max_retries, state_column_id, request_column_id, result_spec_column_id, normalized_expr) "
+            "VALUES (now(6), now(6), %lu, %lu, '%.*s', %ld, %lu, %lu, %lu, '%.*s')",
+            OB_ALL_AI_COLUMN_TNAME, table_id, def.column_id_,
+            def.column_name_.length(), def.column_name_.ptr(), def.max_retries_,
+            def.state_column_id_, def.request_column_id_, def.result_spec_column_id_,
+            def.normalized_expr_.length(), def.normalized_expr_.ptr()))) {
+    } else if (OB_FAIL(sql_proxy->write(sql.ptr(), affected_rows))) {
+      LOG_WARN("failed to write ai column metadata", K(ret), K(sql));
     }
   }
   return ret;
@@ -827,6 +868,28 @@ int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
                                                 ctx.root_command_service(),
                                                 *ctx.get_query_runtime_environment(),
                                                 ctx.local_command_service()))) {
+          }
+        }
+        if (OB_SUCC(ret) && !stmt.get_ai_column_defs().empty()) {
+          ObMySQLProxy *sql_proxy = ctx.get_sql_proxy();
+          uint64_t table_id = alter_table_arg.alter_table_schema_.get_table_id();
+          const ObSEArray<ObAiColumnDef, 4> &defs = stmt.get_ai_column_defs();
+          for (int64_t j = 0; OB_SUCC(ret) && j < defs.count(); ++j) {
+            const ObAiColumnDef &def = defs.at(j);
+            ObSqlString sql;
+            int64_t affected_rows = 0;
+            if (OB_ISNULL(sql_proxy)) {
+              ret = OB_ERR_UNEXPECTED;
+            } else if (OB_FAIL(sql.append_fmt(
+                    "INSERT INTO %s (gmt_create, gmt_modified, table_id, column_id, column_name, "
+                    "max_retries, state_column_id, request_column_id, result_spec_column_id, normalized_expr) "
+                    "VALUES (now(6), now(6), %lu, 0, '%.*s', %ld, 0, 0, 0, '%.*s')",
+                    OB_ALL_AI_COLUMN_TNAME, table_id,
+                    def.column_name_.length(), def.column_name_.ptr(), def.max_retries_,
+                    def.normalized_expr_.length(), def.normalized_expr_.ptr()))) {
+            } else if (OB_FAIL(sql_proxy->write(sql.ptr(), affected_rows))) {
+              LOG_WARN("failed to write alter ai column metadata", K(ret), K(sql));
+            }
           }
         }
       }
