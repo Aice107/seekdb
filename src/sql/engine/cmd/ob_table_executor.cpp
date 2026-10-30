@@ -1032,7 +1032,6 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
       }
     }
   }
-  LOG_INFO("aiw fetch", K(ret), "n", tasks.count());
   if (OB_SUCC(ret) && !tasks.empty()) {
     sqlclient::ObISQLConnectionGuard conn_guard;
     common::sqlclient::ObISQLConnection *conn = NULL;
@@ -1046,7 +1045,6 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
       if (OB_FAIL(set_sql.append_fmt(
               "SET SESSION ob_query_timeout = 3000000, ob_trx_lock_timeout = 100000"))) {
       } else if (OB_FAIL(conn->execute_write(set_sql.string(), ignored))) {
-        LOG_INFO("aiw set timeouts failed", K(ret));
         ret = OB_SUCCESS;
       }
     }
@@ -1069,7 +1067,6 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
       } else {
         ObSqlString fix;
         int tmp_ret = conn->execute_write(upd.string(), affected_rows);
-        LOG_INFO("aiw upd", K(tmp_ret), "affected", affected_rows, K(upd));
         if (OB_SUCCESS != tmp_ret) {
           LOG_WARN("ai column task evaluation failed", K(tmp_ret), K(upd));
           if (item.retry_count_ + 1 > item.max_retries_) {
