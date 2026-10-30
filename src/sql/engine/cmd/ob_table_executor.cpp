@@ -669,6 +669,14 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
       //    trigger would turn the object into a JSON string.
       const ObColumnSchemaV2 *result_col = schema.get_column_schema(cname);
       const bool is_json_result = OB_NOT_NULL(result_col) && result_col->is_json();
+      // Vector columns cannot be read back through NEW inside a trigger (OB -4006), so the
+      // invalidation trigger is skipped for them; a native path has to null them instead.
+      bool is_vector_result = false;
+      if (OB_NOT_NULL(result_col) && 1 == result_col->get_extended_type_info().count()) {
+        ObString info = result_col->get_extended_type_info().at(0);
+        ObString head = info.split_on('(').trim();
+        is_vector_result = (0 == head.compare("VECTOR"));
+      }
       ObSqlString keep_expr;
       if (OB_SUCC(ret)) {
         if (is_json_result) {
@@ -680,7 +688,9 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
           ret = keep_expr.append_fmt("NEW.`%.*s`", cname.length(), cname.ptr());
         }
       }
-      if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
+      if (OB_SUCC(ret) && is_vector_result) {
+        // no invalidation trigger for vector results
+      } else if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
               "CREATE TRIGGER `__ai_upd_inv_%ld_%ld` BEFORE UPDATE ON `%.*s`.`%.*s` "
               "FOR EACH ROW SET NEW.`%.*s` = IF(%s, NULL, %s)",
               tid, cid, db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
