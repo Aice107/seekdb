@@ -296,6 +296,23 @@ public:
   int execute(ObExecContext &ctx, ObOptimizeTableStmt &stmt);
 };
 
+class ObAiColumnTriggerQueue
+{
+public:
+  struct TriggerReq
+  {
+    uint64_t session_id_;
+    common::ObString db_;
+    common::ObString table_;
+    common::ObString body_;
+  };
+  static int enqueue(uint64_t session_id,
+                     const common::ObString &db,
+                     const common::ObString &table,
+                     const common::ObString &body);
+  static int drain_for_session(uint64_t session_id, common::ObMySQLProxy *proxy);
+};
+
 } //end namespace sql
 } //end namespace oceanbase
 

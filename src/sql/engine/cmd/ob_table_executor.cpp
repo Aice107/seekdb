@@ -553,6 +553,133 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
       LOG_WARN("failed to write ai column metadata", K(ret), K(sql));
     }
   }
+  if (OB_SUCC(ret) && !defs.empty()) {
+    const share::schema::ObTableSchema &schema = stmt.get_create_table_arg().schema_;
+    const ObString &db_name = stmt.get_create_table_arg().db_name_;
+    const ObString &table_name = schema.get_table_name_str();
+    ObSqlString predicate_expr;
+    int64_t max_rk_pos = 0;
+    for (int64_t i = 0; OB_SUCC(ret) && i < schema.get_column_count(); ++i) {
+      const ObColumnSchemaV2 *c = schema.get_column_schema_by_idx(i);
+      if (OB_NOT_NULL(c) && c->get_rowkey_position() > max_rk_pos) {
+        max_rk_pos = c->get_rowkey_position();
+      }
+    }
+    if (OB_SUCC(ret) && max_rk_pos <= 0) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_ERROR("no rowkey column for ai trigger", K(ret));
+    } else if (OB_SUCC(ret) && OB_FAIL(predicate_expr.append_fmt("CONCAT("))) {
+    } else if (OB_SUCC(ret)) {
+      for (int64_t pos = 1; OB_SUCC(ret) && pos <= max_rk_pos; ++pos) {
+        const ObColumnSchemaV2 *col = NULL;
+        for (int64_t i = 0; OB_ISNULL(col) && i < schema.get_column_count(); ++i) {
+          const ObColumnSchemaV2 *c = schema.get_column_schema_by_idx(i);
+          if (OB_NOT_NULL(c) && c->get_rowkey_position() == pos) {
+            col = c;
+          }
+        }
+        if (OB_ISNULL(col)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (OB_FAIL(predicate_expr.append_fmt(
+                       "%s'`%s` = ', NEW.%s", pos > 1 ? ", ' and '" : "",
+                       col->get_column_name(), col->get_column_name()))) {
+        }
+      }
+      if (OB_SUCC(ret) && OB_FAIL(predicate_expr.append_fmt(")"))) {
+      }
+    }
+    if (OB_SUCC(ret) && db_name.empty()) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_ERROR("empty db name for ai column trigger", K(ret));
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < defs.count(); ++i) {
+      const ObAiColumnDef &def = defs.at(i);
+      ObSqlString trg;
+      if (OB_FAIL(trg.append_fmt(
+              "CREATE TRIGGER `__ai_ins_%ld_%ld` AFTER INSERT ON `%.*s`.`%.*s` "
+              "FOR EACH ROW INSERT INTO oceanbase.__all_ai_column_task "
+              "(task_id, table_id, column_id, rowkey_predicate, eligible_ts, state, retry_count) "
+              "VALUES (uuid_short(), %lu, %lu, %.*s, now(6), 0, 0)",
+              static_cast<int64_t>(table_id), static_cast<int64_t>(def.column_id_),
+              db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
+              table_id, def.column_id_,
+              predicate_expr.length(), predicate_expr.ptr()))) {
+      } else if (OB_FAIL(ObAiColumnTriggerQueue::enqueue(
+                     session->get_server_sid(), db_name, table_name, trg.string()))) {
+        LOG_ERROR("failed to enqueue ai column trigger", K(ret), K(trg));
+      }
+    }
+  }
+  return ret;
+}
+
+static lib::ObMutex g_ai_trigger_mutex;
+static common::ObSEArray<ObAiColumnTriggerQueue::TriggerReq, 16> g_ai_trigger_queue;
+static common::ObArenaAllocator g_ai_trigger_alloc;
+
+int ObAiColumnTriggerQueue::enqueue(uint64_t session_id,
+                                    const common::ObString &db,
+                                    const common::ObString &table,
+                                    const common::ObString &body)
+{
+  int ret = OB_SUCCESS;
+  TriggerReq req;
+  lib::ObMutexGuard guard(g_ai_trigger_mutex);
+  if (db.empty() || table.empty() || body.empty()) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    req.session_id_ = session_id;
+    if (OB_FAIL(ob_write_string(g_ai_trigger_alloc, db, req.db_))) {
+    } else if (OB_FAIL(ob_write_string(g_ai_trigger_alloc, table, req.table_))) {
+    } else if (OB_FAIL(ob_write_string(g_ai_trigger_alloc, body, req.body_))) {
+    } else if (OB_FAIL(g_ai_trigger_queue.push_back(req))) {
+    }
+  }
+  return ret;
+}
+
+int ObAiColumnTriggerQueue::drain_for_session(uint64_t session_id, common::ObMySQLProxy *proxy)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<TriggerReq, 8> reqs;
+  ObSEArray<TriggerReq, 8> remain;
+  {
+    lib::ObMutexGuard guard(g_ai_trigger_mutex);
+    for (int64_t i = 0; OB_SUCC(ret) && i < g_ai_trigger_queue.count(); ++i) {
+      const TriggerReq &req = g_ai_trigger_queue.at(i);
+      if (req.session_id_ == session_id) {
+        if (OB_FAIL(reqs.push_back(req))) {
+        }
+      } else if (OB_FAIL(remain.push_back(req))) {
+      }
+    }
+    if (OB_SUCC(ret)) {
+      g_ai_trigger_queue.reset();
+      for (int64_t i = 0; OB_SUCC(ret) && i < remain.count(); ++i) {
+        if (OB_FAIL(g_ai_trigger_queue.push_back(remain.at(i)))) {
+        }
+      }
+    }
+  }
+  if (OB_SUCC(ret) && !reqs.empty() && OB_NOT_NULL(proxy)) {
+    sqlclient::ObISQLConnectionGuard conn_guard;
+    common::sqlclient::ObISQLConnection *conn = NULL;
+    if (OB_FAIL(proxy->acquire_connection(conn_guard, 0))) {
+    } else if (OB_ISNULL(conn = conn_guard.get_ptr())) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < reqs.count(); ++i) {
+      const TriggerReq &req = reqs.at(i);
+      ObSqlString use_sql;
+      int64_t affected_rows = 0;
+      if (OB_FAIL(use_sql.append_fmt("USE `%.*s`", req.db_.length(), req.db_.ptr()))) {
+      } else if (OB_FAIL(conn->execute_write(use_sql.string(), affected_rows))) {
+        LOG_WARN("failed to use db for ai trigger", K(ret), K(use_sql));
+      } else if (OB_FAIL(conn->execute_write(req.body_, affected_rows))) {
+        LOG_WARN("failed to create ai trigger", K(ret), K(req.body_));
+      }
+    }
+  }
   return ret;
 }
 

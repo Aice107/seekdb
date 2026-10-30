@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL
+#include "sql/engine/cmd/ob_table_executor.h"
 #include "config_bridge.h"
 #include "sql/ob_sql.h"
 #include "lib/json/ob_json_print_utils.h"
@@ -158,6 +159,13 @@ int ObSql::stmt_prepare(const common::ObString &stmt,
                         bool is_inner_sql/*true*/)
 {
   int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(GCTX.sql_proxy_)) {
+    int tmp_ret = ObAiColumnTriggerQueue::drain_for_session(
+        result.get_session().get_server_sid(), GCTX.sql_proxy_);
+    if (OB_SUCCESS != tmp_ret) {
+      LOG_WARN("failed to drain ai trigger queue", K(tmp_ret));
+    }
+  }
   LinkExecCtxGuard link_guard(result.get_session(), result.get_exec_context());
   if (OB_FAIL(sanity_check(context))) {
   } else if (OB_FAIL(handle_ps_prepare(stmt, context, result, is_inner_sql))) {
@@ -174,6 +182,13 @@ int ObSql::stmt_prepare(const common::ObString &stmt,
 int ObSql::stmt_query(const common::ObString &stmt, ObSqlCtx &context, ObResultSet &result)
 {
   int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(GCTX.sql_proxy_)) {
+    int tmp_ret = ObAiColumnTriggerQueue::drain_for_session(
+        result.get_session().get_server_sid(), GCTX.sql_proxy_);
+    if (OB_SUCCESS != tmp_ret) {
+      LOG_WARN("failed to drain ai trigger queue", K(tmp_ret));
+    }
+  }
   LinkExecCtxGuard link_guard(result.get_session(), result.get_exec_context());
   ObTraceSpanGuard compile_span(&result.get_session(), TRACE_SQL_COMPILE);
   ObTruncatedString trunc_stmt(stmt);
