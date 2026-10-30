@@ -70,3 +70,17 @@ build_release/src/observer/seekdb --base-dir /tmp/obtest --port 2881 --nodaemon 
   --database=test --test-file=mysql_test/test_suite/ai_function/t/ai_prompt.test \
   --result-file=mysql_test/test_suite/ai_function/r/mysql/ai_prompt.result
 ```
+
+## DML task write findings (2026-10-30)
+
+- `ObTableInsertOp::insert_row_to_das()` is the per-row hook; `ObDMLBaseCtDef.column_ids_`
+  maps one-to-one to the datums of `modify_row.new_row_` (use `StoredRow::cells()`).
+- `ObDASDMLBaseCtDef.index_tid_` is the real table id; `table_id_` is a runtime location id.
+- Queueing task INSERT statements and executing them after `submit_all_dml_task()`
+  (`ObTableInsertOp::write_rows_post_proc`, `iter_end_`) builds the right SQL, but the
+  inner-SQL write to `__all_ai_column_task` returns -4016 in the same transaction.
+  A top-level `INSERT INTO oceanbase.__all_ai_column_task ...` works, so the failure is
+  the nested inner-SQL/transaction path, not the SQL or table.
+- Therefore the correct implementation is to add the task row as a **DAS task** in the
+  same `dml_rtctx_` (or through the after-row trigger framework), instead of
+  `execute_write`.
