@@ -1287,6 +1287,25 @@ int ObAIFuncUtils::get_ai_func_info(ObIAllocator &allocator, const ObString &mod
   return ret;
 }
 
+// Pulls an optional "system_prompt" out of the completion config and turns it into
+// the system message of the chat request. The key is removed afterwards so it never
+// leaks into the request body.
+static int extract_ai_system_prompt(ObJsonObject *config, ObString &prompt_str)
+{
+  int ret = OB_SUCCESS;
+  if (OB_NOT_NULL(config)) {
+    ObJsonNode *node = config->get_value("system_prompt");
+    if (OB_NOT_NULL(node) && ObJsonNodeType::J_STRING == node->json_type()) {
+      ObJsonString *str = static_cast<ObJsonString *>(node);
+      prompt_str = str->value();
+      if (OB_FAIL(config->remove("system_prompt"))) {
+        LOG_WARN("failed to remove system_prompt from config", K(ret));
+      }
+    }
+  }
+  return ret;
+}
+
 int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObString &result)
 {
   int ret = OB_SUCCESS;
@@ -1303,6 +1322,7 @@ int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObStr
   if (!is_completion_type()) {
     ret = OB_INVALID_ARGUMENT;
     LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai_complete, info type is not completion");
+  } else if (OB_FAIL(extract_ai_system_prompt(config, prompt_str))) {
   } else if (OB_FAIL(ObAIFuncUtils::get_complete_provider(*allocator_, endpoint_info_.get_provider(), complete_provider))) {
   } else if (OB_FAIL(endpoint_info_.get_unencrypted_access_key(*allocator_, unencrypted_access_key))) {
   } else if (OB_FAIL(complete_provider->get_header(*allocator_, unencrypted_access_key, headers))) {

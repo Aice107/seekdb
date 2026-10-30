@@ -313,6 +313,14 @@ public:
   static int drain_for_session(uint64_t session_id, common::ObMySQLProxy *proxy);
 };
 
+class ObAiColumnWorker
+{
+public:
+  // Processes pending rows of oceanbase.__all_ai_column_task.
+  // Swallows and logs all errors: it must never fail the caller's statement.
+  static int run_pending(common::ObMySQLProxy *proxy);
+};
+
 } //end namespace sql
 } //end namespace oceanbase
 

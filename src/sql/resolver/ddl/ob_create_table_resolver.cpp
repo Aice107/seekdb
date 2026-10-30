@@ -770,14 +770,21 @@ int ObCreateTableResolver::resolve_ai_column(share::schema::ObColumnSchemaV2 &re
       }
     }
     if (OB_FAIL(ret)) {
-    } else if (result_col.is_json()) {
-      const char *suffix = " Return exactly one valid JSON value";
-      char buf[256];
-      int64_t len = snprintf(buf, sizeof(buf), "%s", suffix);
-      ObString normalized;
-      if (OB_FAIL(ob_write_string(*allocator_, ObString(len, buf), normalized))) {
-      } else {
-        def.normalized_expr_ = normalized;
+    } else {
+      const char *suffix = NULL;
+      if (result_col.is_json()) {
+        suffix = " Return exactly one valid JSON value";
+      } else if (ob_is_integer_type(result_col.get_meta_type().get_type())) {
+        suffix = " Return exactly one base-10 integer";
+      }
+      if (OB_NOT_NULL(suffix)) {
+        char buf[256];
+        int64_t len = snprintf(buf, sizeof(buf), "%s", suffix);
+        ObString normalized;
+        if (OB_FAIL(ob_write_string(*allocator_, ObString(static_cast<int32_t>(len), buf), normalized))) {
+        } else {
+          def.normalized_expr_ = normalized;
+        }
       }
     }
   }

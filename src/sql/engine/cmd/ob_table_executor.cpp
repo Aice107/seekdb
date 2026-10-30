@@ -522,6 +522,38 @@ int ObCreateTableExecutor::execute(ObExecContext &ctx, ObCreateTableStmt &stmt)
   return ret;
 }
 
+// Turns "content,tags" into "NOT (NEW.`content` <=> OLD.`content`) OR ...".
+static int append_ai_change_condition(const common::ObString &deps, ObSqlString &cond)
+{
+  int ret = OB_SUCCESS;
+  int32_t start = 0;
+  bool first = true;
+  for (int32_t i = 0; OB_SUCC(ret) && i <= deps.length(); ++i) {
+    if (i == deps.length() || ',' == deps.ptr()[i]) {
+      int32_t begin = start;
+      int32_t end = i;
+      while (begin < end && (' ' == deps.ptr()[begin] || '`' == deps.ptr()[begin])) {
+        ++begin;
+      }
+      while (end > begin && (' ' == deps.ptr()[end - 1] || '`' == deps.ptr()[end - 1])) {
+        --end;
+      }
+      if (end > begin) {
+        if (!first && OB_FAIL(cond.append_fmt(" OR "))) {
+        } else {
+          first = false;
+          if (OB_SUCC(ret) && OB_FAIL(cond.append_fmt(
+                  "NOT (NEW.`%.*s` <=> OLD.`%.*s`)", end - begin, deps.ptr() + begin,
+                  end - begin, deps.ptr() + begin))) {
+          }
+        }
+      }
+      start = i + 1;
+    }
+  }
+  return ret;
+}
+
 int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
                                                      ObCreateTableStmt &stmt,
                                                      uint64_t table_id)
@@ -557,7 +589,9 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
     const share::schema::ObTableSchema &schema = stmt.get_create_table_arg().schema_;
     const ObString &db_name = stmt.get_create_table_arg().db_name_;
     const ObString &table_name = schema.get_table_name_str();
-    ObSqlString predicate_expr;
+    ObSqlString pred_new;
+    ObSqlString pred_old;
+    ObSqlString pk_change;
     int64_t max_rk_pos = 0;
     for (int64_t i = 0; OB_SUCC(ret) && i < schema.get_column_count(); ++i) {
       const ObColumnSchemaV2 *c = schema.get_column_schema_by_idx(i);
@@ -568,7 +602,8 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
     if (OB_SUCC(ret) && max_rk_pos <= 0) {
       ret = OB_ERR_UNEXPECTED;
       LOG_ERROR("no rowkey column for ai trigger", K(ret));
-    } else if (OB_SUCC(ret) && OB_FAIL(predicate_expr.append_fmt("CONCAT("))) {
+    } else if (OB_SUCC(ret) && OB_FAIL(pred_new.append_fmt("CONCAT("))) {
+    } else if (OB_SUCC(ret) && OB_FAIL(pred_old.append_fmt("CONCAT("))) {
     } else if (OB_SUCC(ret)) {
       for (int64_t pos = 1; OB_SUCC(ret) && pos <= max_rk_pos; ++pos) {
         const ObColumnSchemaV2 *col = NULL;
@@ -580,12 +615,19 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
         }
         if (OB_ISNULL(col)) {
           ret = OB_ERR_UNEXPECTED;
-        } else if (OB_FAIL(predicate_expr.append_fmt(
+        } else if (OB_FAIL(pred_new.append_fmt(
                        "%s'`%s` = ', NEW.%s", pos > 1 ? ", ' and '" : "",
+                       col->get_column_name(), col->get_column_name()))) {
+        } else if (OB_FAIL(pred_old.append_fmt(
+                       "%s'`%s` = ', OLD.%s", pos > 1 ? ", ' and '" : "",
+                       col->get_column_name(), col->get_column_name()))) {
+        } else if (OB_FAIL(pk_change.append_fmt(
+                       "%sNOT (NEW.%s <=> OLD.%s)", pos > 1 ? " OR " : "",
                        col->get_column_name(), col->get_column_name()))) {
         }
       }
-      if (OB_SUCC(ret) && OB_FAIL(predicate_expr.append_fmt(")"))) {
+      if (OB_SUCC(ret) && OB_FAIL(pred_new.append_fmt(")"))) {
+      } else if (OB_SUCC(ret) && OB_FAIL(pred_old.append_fmt(")"))) {
       }
     }
     if (OB_SUCC(ret) && db_name.empty()) {
@@ -594,19 +636,101 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
     }
     for (int64_t i = 0; OB_SUCC(ret) && i < defs.count(); ++i) {
       const ObAiColumnDef &def = defs.at(i);
+      ObSqlString dep_change;
+      ObSqlString cond;
       ObSqlString trg;
-      if (OB_FAIL(trg.append_fmt(
+      const int64_t tid = static_cast<int64_t>(table_id);
+      const int64_t cid = static_cast<int64_t>(def.column_id_);
+      const ObString &cname = def.column_name_;
+      if (OB_SUCC(ret) && OB_FAIL(append_ai_change_condition(def.dependency_columns_, dep_change))) {
+      } else if (OB_SUCC(ret)) {
+        if (dep_change.length() > 0) {
+          ret = cond.append_fmt("(%s) OR (%s)", dep_change.ptr(), pk_change.ptr());
+        } else {
+          ret = cond.append_fmt("%s", pk_change.ptr());
+        }
+      }
+      // 1) AFTER INSERT: queue one task row per AI column.
+      if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
               "CREATE TRIGGER `__ai_ins_%ld_%ld` AFTER INSERT ON `%.*s`.`%.*s` "
               "FOR EACH ROW INSERT INTO oceanbase.__all_ai_column_task "
-              "(task_id, table_id, column_id, rowkey_predicate, eligible_ts, state, retry_count) "
-              "VALUES (uuid_short(), %lu, %lu, %.*s, now(6), 0, 0)",
-              static_cast<int64_t>(table_id), static_cast<int64_t>(def.column_id_),
-              db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
-              table_id, def.column_id_,
-              predicate_expr.length(), predicate_expr.ptr()))) {
-      } else if (OB_FAIL(ObAiColumnTriggerQueue::enqueue(
+              "(task_id, table_id, column_id, rowkey_predicate, eligible_ts, state, retry_count, request_id) "
+              "VALUES (uuid_short(), %ld, %ld, %s, now(6), 0, 0, CONCAT('ai_', %ld, '_', %s))",
+              tid, cid, db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
+              tid, cid, pred_new.ptr(), tid, pred_new.ptr()))) {
+      } else if (OB_SUCC(ret) && OB_FAIL(ObAiColumnTriggerQueue::enqueue(
                      session->get_server_sid(), db_name, table_name, trg.string()))) {
-        LOG_ERROR("failed to enqueue ai column trigger", K(ret), K(trg));
+        LOG_ERROR("failed to enqueue ai insert trigger", K(ret), K(trg));
+      } else if (OB_SUCC(ret)) {
+        trg.reset();
+      }
+      // 2) BEFORE UPDATE: invalidate the stale result when a dependency column or the
+      //    primary key changes. JSON columns need an explicit round trip, otherwise the
+      //    trigger would turn the object into a JSON string.
+      const ObColumnSchemaV2 *result_col = schema.get_column_schema(cname);
+      const bool is_json_result = OB_NOT_NULL(result_col) && result_col->is_json();
+      ObSqlString keep_expr;
+      if (OB_SUCC(ret)) {
+        if (is_json_result) {
+          ret = keep_expr.append_fmt(
+              "CAST(IF(json_type(NEW.`%.*s`) = 'STRING', json_unquote(NEW.`%.*s`), "
+              "NEW.`%.*s`) AS JSON)", cname.length(), cname.ptr(),
+              cname.length(), cname.ptr(), cname.length(), cname.ptr());
+        } else {
+          ret = keep_expr.append_fmt("NEW.`%.*s`", cname.length(), cname.ptr());
+        }
+      }
+      if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
+              "CREATE TRIGGER `__ai_upd_inv_%ld_%ld` BEFORE UPDATE ON `%.*s`.`%.*s` "
+              "FOR EACH ROW SET NEW.`%.*s` = IF(%s, NULL, %s)",
+              tid, cid, db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
+              cname.length(), cname.ptr(), cond.ptr(), keep_expr.ptr()))) {
+      } else if (OB_SUCC(ret) && OB_FAIL(ObAiColumnTriggerQueue::enqueue(
+                     session->get_server_sid(), db_name, table_name, trg.string()))) {
+        LOG_ERROR("failed to enqueue ai invalidate trigger", K(ret), K(trg));
+      } else if (OB_SUCC(ret)) {
+        trg.reset();
+      }
+      // 3) BEFORE UPDATE: drop the queued task of the old and the current row key so the
+      //    AFTER UPDATE trigger can insert exactly one fresh task (no duplicates).
+      if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
+              "CREATE TRIGGER `__ai_upd_del_%ld_%ld` BEFORE UPDATE ON `%.*s`.`%.*s` "
+              "FOR EACH ROW DELETE FROM oceanbase.__all_ai_column_task "
+              "WHERE table_id = %ld AND column_id = %ld "
+              "AND (rowkey_predicate = %s OR rowkey_predicate = %s) AND (%s)",
+              tid, cid, db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
+              tid, cid, pred_old.ptr(), pred_new.ptr(), cond.ptr()))) {
+      } else if (OB_SUCC(ret) && OB_FAIL(ObAiColumnTriggerQueue::enqueue(
+                     session->get_server_sid(), db_name, table_name, trg.string()))) {
+        LOG_ERROR("failed to enqueue ai update-cleanup trigger", K(ret), K(trg));
+      } else if (OB_SUCC(ret)) {
+        trg.reset();
+      }
+      // 4) AFTER UPDATE: queue one task row for the new value set.
+      if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
+              "CREATE TRIGGER `__ai_upd_ins_%ld_%ld` AFTER UPDATE ON `%.*s`.`%.*s` "
+              "FOR EACH ROW INSERT INTO oceanbase.__all_ai_column_task "
+              "(task_id, table_id, column_id, rowkey_predicate, eligible_ts, state, retry_count, request_id) "
+              "SELECT uuid_short(), %ld, %ld, %s, now(6), 0, 0, CONCAT('ai_', %ld, '_', %s) "
+              "FROM dual WHERE (%s)",
+              tid, cid, db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
+              tid, cid, pred_new.ptr(), tid, pred_new.ptr(), cond.ptr()))) {
+      } else if (OB_SUCC(ret) && OB_FAIL(ObAiColumnTriggerQueue::enqueue(
+                     session->get_server_sid(), db_name, table_name, trg.string()))) {
+        LOG_ERROR("failed to enqueue ai update trigger", K(ret), K(trg));
+      } else if (OB_SUCC(ret)) {
+        trg.reset();
+      }
+      // 5) AFTER DELETE: drop the queued tasks of the deleted row.
+      if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
+              "CREATE TRIGGER `__ai_del_%ld_%ld` AFTER DELETE ON `%.*s`.`%.*s` "
+              "FOR EACH ROW DELETE FROM oceanbase.__all_ai_column_task "
+              "WHERE table_id = %ld AND column_id = %ld AND rowkey_predicate = %s",
+              tid, cid, db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
+              tid, cid, pred_old.ptr()))) {
+      } else if (OB_SUCC(ret) && OB_FAIL(ObAiColumnTriggerQueue::enqueue(
+                     session->get_server_sid(), db_name, table_name, trg.string()))) {
+        LOG_ERROR("failed to enqueue ai delete trigger", K(ret), K(trg));
       }
     }
   }
@@ -668,17 +792,324 @@ int ObAiColumnTriggerQueue::drain_for_session(uint64_t session_id, common::ObMyS
     } else if (OB_ISNULL(conn = conn_guard.get_ptr())) {
       ret = OB_ERR_UNEXPECTED;
     }
-    for (int64_t i = 0; OB_SUCC(ret) && i < reqs.count(); ++i) {
+    for (int64_t i = 0; i < reqs.count(); ++i) {
       const TriggerReq &req = reqs.at(i);
       ObSqlString use_sql;
       int64_t affected_rows = 0;
+      int tmp_ret = OB_SUCCESS;
       if (OB_FAIL(use_sql.append_fmt("USE `%.*s`", req.db_.length(), req.db_.ptr()))) {
-      } else if (OB_FAIL(conn->execute_write(use_sql.string(), affected_rows))) {
-        LOG_WARN("failed to use db for ai trigger", K(ret), K(use_sql));
-      } else if (OB_FAIL(conn->execute_write(req.body_, affected_rows))) {
-        LOG_WARN("failed to create ai trigger", K(ret), K(req.body_));
+        tmp_ret = ret;
+      } else if (OB_FAIL(tmp_ret = conn->execute_write(use_sql.string(), affected_rows))) {
+        LOG_WARN("failed to use db for ai trigger", K(tmp_ret), K(use_sql));
+      } else if (OB_FAIL(tmp_ret = conn->execute_write(req.body_, affected_rows))) {
+        LOG_WARN("failed to create ai trigger", K(tmp_ret), K(req.body_));
+      }
+      if (OB_SUCCESS != tmp_ret && OB_SUCCESS == ret) {
+        ret = tmp_ret;
       }
     }
+  }
+  return ret;
+}
+
+struct AiColumnTaskItem
+{
+  int64_t task_id_;
+  int64_t table_id_;
+  int64_t retry_count_;
+  int64_t max_retries_;
+  common::ObString db_;
+  common::ObString table_;
+  common::ObString column_;
+  common::ObString predicate_;
+  common::ObString raw_expr_;
+  common::ObString normalized_expr_;
+};
+
+static __thread bool g_ai_worker_busy = false;
+
+// The AI column spec (for example "Return exactly one valid JSON value") has to reach
+// the model as the system message. AI_COMPLETE takes it as the "system_prompt" key of
+// its optional third (JSON config) argument, so the stored expression is extended here.
+static int build_ai_column_value_expr(const common::ObString &raw_expr,
+                                      const common::ObString &normalized_expr,
+                                      ObSqlString &out)
+{
+  int ret = OB_SUCCESS;
+  int32_t close = raw_expr.length() - 1;
+  while (close >= 0 && (' ' == raw_expr.ptr()[close] || ';' == raw_expr.ptr()[close])) {
+    --close;
+  }
+  const bool is_complete = raw_expr.length() >= 12
+      && 0 == strncasecmp(raw_expr.ptr(), "AI_COMPLETE(", 12);
+  if (normalized_expr.empty() || !is_complete || close <= 0 || ')' != raw_expr.ptr()[close]) {
+    ret = out.append(raw_expr);
+  } else {
+    if (OB_FAIL(out.append_fmt("%.*s, '{\"system_prompt\": \"", close, raw_expr.ptr()))) {
+    }
+    for (int32_t i = 0; OB_SUCC(ret) && i < normalized_expr.length(); ++i) {
+      const char c = normalized_expr.ptr()[i];
+      if ('\\' == c || '\'' == c || '"' == c) {
+        ret = out.append_fmt("\\%c", c);
+      } else {
+        ret = out.append_fmt("%c", c);
+      }
+    }
+    if (OB_SUCC(ret) && OB_FAIL(out.append_fmt("\"}')"))) {
+    }
+  }
+  return ret;
+}
+
+// Re-assigning a row's dependency columns to their current values keeps the AI column
+// triggers from invalidating the row (they only react when a dependency value changes).
+// NULL-safe string fetch: nullable metadata (for example normalized_expr of a non-JSON
+// AI column) must not abort the whole task batch.
+static int get_ai_nullable_string(common::sqlclient::ObMySQLResult *result,
+                                  const int64_t idx, ObString &out)
+{
+  int ret = OB_SUCCESS;
+  out.reset();
+  if (OB_FAIL(result->get_varchar(idx, out))) {
+    ret = OB_SUCCESS;
+    out.reset();
+  }
+  return ret;
+}
+
+static int build_ai_dep_assignments(common::ObMySQLProxy *proxy, const int64_t table_id,
+                                    ObSqlString &out)
+{
+  int ret = OB_SUCCESS;
+  ObSqlString sql;
+  common::ObArenaAllocator allocator;
+  ObSEArray<common::ObString, 8> seen;
+  if (OB_FAIL(sql.append_fmt("SELECT DISTINCT dependency_columns FROM %s WHERE table_id = %ld",
+                             OB_ALL_AI_COLUMN_TNAME, table_id))) {
+  } else {
+    SMART_VAR(ObMySQLProxy::MySQLResult, res) {
+      common::sqlclient::ObMySQLResult *result = NULL;
+      if (OB_FAIL(proxy->read(res, sql.ptr()))) {
+      } else if (OB_ISNULL(result = res.get_result())) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        while (OB_SUCC(ret) && OB_SUCC(result->next())) {
+          ObString deps;
+          if (OB_FAIL(get_ai_nullable_string(result, 0, deps))) {
+            ret = OB_SUCCESS;
+          } else if (deps.empty()) {
+          } else {
+            int32_t start = 0;
+            for (int32_t i = 0; OB_SUCC(ret) && i <= deps.length(); ++i) {
+              if (i == deps.length() || ',' == deps.ptr()[i]) {
+                int32_t begin = start;
+                int32_t end = i;
+                while (begin < end && (' ' == deps.ptr()[begin] || '`' == deps.ptr()[begin])) {
+                  ++begin;
+                }
+                while (end > begin && (' ' == deps.ptr()[end - 1] || '`' == deps.ptr()[end - 1])) {
+                  --end;
+                }
+                if (end > begin) {
+                  bool dup = false;
+                  for (int64_t k = 0; !dup && k < seen.count(); ++k) {
+                    if (seen.at(k).length() == end - begin
+                        && 0 == strncmp(seen.at(k).ptr(), deps.ptr() + begin, end - begin)) {
+                      dup = true;
+                    }
+                  }
+                  if (!dup) {
+                    ObString copy;
+                    if (OB_FAIL(ob_write_string(allocator, ObString(end - begin, deps.ptr() + begin), copy))) {
+                    } else if (OB_FAIL(seen.push_back(copy))) {
+                    } else if (OB_FAIL(out.append_fmt("%s`%.*s` = `%.*s`", out.length() > 0 ? ", " : "",
+                                                     end - begin, deps.ptr() + begin,
+                                                     end - begin, deps.ptr() + begin))) {
+                    }
+                  }
+                }
+                start = i + 1;
+              }
+            }
+          }
+        }
+        if (OB_ITER_END == ret) {
+          ret = OB_SUCCESS;
+        }
+      }
+    }
+  }
+  // The row key columns must be re-assigned as well: a trigger sees untouched NEW
+  // columns as NULL, which would look like a primary key change.
+  if (OB_SUCC(ret)) {
+    ObSqlString rk_sql;
+    if (OB_FAIL(rk_sql.append_fmt(
+            "SELECT column_name FROM %s WHERE table_id = %ld AND rowkey_position > 0",
+            OB_ALL_COLUMN_TNAME, table_id))) {
+    } else {
+      SMART_VAR(ObMySQLProxy::MySQLResult, rk_res) {
+        common::sqlclient::ObMySQLResult *rk_result = NULL;
+        if (OB_FAIL(proxy->read(rk_res, rk_sql.ptr()))) {
+        } else if (OB_ISNULL(rk_result = rk_res.get_result())) {
+          ret = OB_ERR_UNEXPECTED;
+        } else {
+          while (OB_SUCC(ret) && OB_SUCC(rk_result->next())) {
+            ObString name;
+            if (OB_FAIL(get_ai_nullable_string(rk_result, 0, name))) {
+            } else if (name.empty()) {
+            } else if (OB_FAIL(out.append_fmt("%s`%.*s` = `%.*s`", out.length() > 0 ? ", " : "",
+                                             name.length(), name.ptr(),
+                                             name.length(), name.ptr()))) {
+            }
+          }
+          if (OB_ITER_END == ret) {
+            ret = OB_SUCCESS;
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
+{
+  int ret = OB_SUCCESS;
+  common::ObArenaAllocator allocator;
+  ObSEArray<AiColumnTaskItem, 8> tasks;
+  ObSqlString sql;
+  if (OB_FAIL(sql.append_fmt(
+          "SELECT t.task_id, t.retry_count, a.max_retries, a.raw_expr, a.column_name, "
+          "d.database_name, tb.table_name, t.rowkey_predicate, a.normalized_expr, t.table_id "
+          "FROM %s t "
+          "JOIN %s a ON a.table_id = t.table_id AND a.column_id = t.column_id "
+          "JOIN %s tb ON tb.table_id = t.table_id "
+          "JOIN %s d ON d.database_id = tb.database_id "
+          "WHERE t.state IN (0, 3) AND t.eligible_ts <= now(6) "
+          "ORDER BY t.task_id LIMIT 8",
+          OB_ALL_AI_COLUMN_TASK_TNAME,
+          OB_ALL_AI_COLUMN_TNAME,
+          OB_ALL_TABLE_TNAME,
+          OB_ALL_DATABASE_TNAME))) {
+  } else {
+    SMART_VAR(ObMySQLProxy::MySQLResult, res) {
+      common::sqlclient::ObMySQLResult *result = NULL;
+      if (OB_FAIL(proxy->read(res, sql.ptr()))) {
+        LOG_WARN("failed to query ai column tasks", K(ret), K(sql));
+      } else if (OB_ISNULL(result = res.get_result())) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        while (OB_SUCC(ret) && OB_SUCC(result->next())) {
+          AiColumnTaskItem item;
+          ObString cel;
+          int64_t i64 = 0;
+          if (OB_FAIL(result->get_int(static_cast<int64_t>(0), i64))) {
+          } else if (FALSE_IT(item.task_id_ = i64)) {
+          } else if (OB_FAIL(result->get_int(static_cast<int64_t>(1), i64))) {
+          } else if (FALSE_IT(item.retry_count_ = i64)) {
+          } else if (OB_FAIL(result->get_int(static_cast<int64_t>(2), i64))) {
+          } else if (FALSE_IT(item.max_retries_ = i64)) {
+          } else if (OB_FAIL(get_ai_nullable_string(result, 3, cel))
+                     || OB_FAIL(ob_write_string(allocator, cel, item.raw_expr_))) {
+          } else if (OB_FAIL(get_ai_nullable_string(result, 4, cel))
+                     || OB_FAIL(ob_write_string(allocator, cel, item.column_))) {
+          } else if (OB_FAIL(get_ai_nullable_string(result, 5, cel))
+                     || OB_FAIL(ob_write_string(allocator, cel, item.db_))) {
+          } else if (OB_FAIL(get_ai_nullable_string(result, 6, cel))
+                     || OB_FAIL(ob_write_string(allocator, cel, item.table_))) {
+          } else if (OB_FAIL(get_ai_nullable_string(result, 7, cel))
+                     || OB_FAIL(ob_write_string(allocator, cel, item.predicate_))) {
+          } else if (OB_FAIL(get_ai_nullable_string(result, 8, cel))
+                     || OB_FAIL(ob_write_string(allocator, cel, item.normalized_expr_))) {
+          } else if (OB_FAIL(result->get_int(static_cast<int64_t>(9), i64))) {
+          } else if (FALSE_IT(item.table_id_ = i64)) {
+          } else if (OB_FAIL(tasks.push_back(item))) {
+          }
+        }
+        if (OB_ITER_END == ret) {
+          ret = OB_SUCCESS;
+        }
+      }
+    }
+  }
+  LOG_INFO("aiw fetch", K(ret), "n", tasks.count());
+  if (OB_SUCC(ret) && !tasks.empty()) {
+    sqlclient::ObISQLConnectionGuard conn_guard;
+    common::sqlclient::ObISQLConnection *conn = NULL;
+    if (OB_FAIL(proxy->acquire_connection(conn_guard, 0))) {
+    } else if (OB_ISNULL(conn = conn_guard.get_ptr())) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    if (OB_SUCC(ret)) {
+      ObSqlString set_sql;
+      int64_t ignored = 0;
+      if (OB_FAIL(set_sql.append_fmt(
+              "SET SESSION ob_query_timeout = 3000000, ob_trx_lock_timeout = 100000"))) {
+      } else if (OB_FAIL(conn->execute_write(set_sql.string(), ignored))) {
+        LOG_INFO("aiw set timeouts failed", K(ret));
+        ret = OB_SUCCESS;
+      }
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < tasks.count(); ++i) {
+      const AiColumnTaskItem &item = tasks.at(i);
+      ObSqlString upd;
+      int64_t affected_rows = 0;
+      ObSqlString value_expr;
+      ObSqlString dep_assignments;
+      if (OB_FAIL(build_ai_column_value_expr(item.raw_expr_, item.normalized_expr_, value_expr))) {
+      } else if (OB_FAIL(build_ai_dep_assignments(proxy, item.table_id_, dep_assignments))) {
+      } else if (OB_FAIL(upd.append_fmt("UPDATE `%.*s`.`%.*s` SET `%.*s` = (%.*s)%s%s WHERE %.*s",
+                                 item.db_.length(), item.db_.ptr(),
+                                 item.table_.length(), item.table_.ptr(),
+                                 item.column_.length(), item.column_.ptr(),
+                                 value_expr.length(), value_expr.ptr(),
+                                 dep_assignments.length() > 0 ? ", " : "",
+                                 dep_assignments.ptr(),
+                                 item.predicate_.length(), item.predicate_.ptr()))) {
+      } else {
+        ObSqlString fix;
+        int tmp_ret = conn->execute_write(upd.string(), affected_rows);
+        LOG_INFO("aiw upd", K(tmp_ret), "affected", affected_rows, K(upd));
+        if (OB_SUCCESS != tmp_ret) {
+          LOG_WARN("ai column task evaluation failed", K(tmp_ret), K(upd));
+          if (item.retry_count_ + 1 > item.max_retries_) {
+            fix.append_fmt("DELETE FROM %s WHERE task_id = %ld",
+                           OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_);
+          } else {
+            fix.append_fmt("UPDATE %s SET retry_count = %ld, state = 3, "
+                           "eligible_ts = now(6) + interval 1 second WHERE task_id = %ld",
+                           OB_ALL_AI_COLUMN_TASK_TNAME, item.retry_count_ + 1, item.task_id_);
+          }
+        } else {
+          fix.append_fmt("DELETE FROM %s WHERE task_id = %ld",
+                         OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_);
+        }
+        int64_t row_affected = 0;
+        if (OB_FAIL(conn->execute_write(fix.string(), row_affected))) {
+          LOG_WARN("failed to update ai column task state", K(ret), K(fix));
+          ret = OB_SUCCESS;
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+int ObAiColumnWorker::run_pending(common::ObMySQLProxy *proxy)
+{
+  int ret = OB_SUCCESS;
+  if (OB_ISNULL(proxy)) {
+    ret = OB_NOT_INIT;
+  } else if (GCTX.in_bootstrap_ || share::SS_SERVING != GCTX.status_) {
+    // never touch inner tables before the server finished bootstrap
+  } else if (g_ai_worker_busy) {
+    // re-entrant call: inner statements issued by the worker itself land here
+  } else {
+    g_ai_worker_busy = true;
+    if (OB_FAIL(run_ai_column_tasks(proxy))) {
+      LOG_WARN("failed to run ai column tasks", K(ret));
+    }
+    g_ai_worker_busy = false;
   }
   return ret;
 }

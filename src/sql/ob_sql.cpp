@@ -165,6 +165,10 @@ int ObSql::stmt_prepare(const common::ObString &stmt,
     if (OB_SUCCESS != tmp_ret) {
       LOG_WARN("failed to drain ai trigger queue", K(tmp_ret));
     }
+    int worker_ret = ObAiColumnWorker::run_pending(GCTX.sql_proxy_);
+    if (OB_SUCCESS != worker_ret) {
+      LOG_WARN("failed to run ai column worker", K(worker_ret));
+    }
   }
   LinkExecCtxGuard link_guard(result.get_session(), result.get_exec_context());
   if (OB_FAIL(sanity_check(context))) {
@@ -187,6 +191,10 @@ int ObSql::stmt_query(const common::ObString &stmt, ObSqlCtx &context, ObResultS
         result.get_session().get_server_sid(), GCTX.sql_proxy_);
     if (OB_SUCCESS != tmp_ret) {
       LOG_WARN("failed to drain ai trigger queue", K(tmp_ret));
+    }
+    int worker_ret = ObAiColumnWorker::run_pending(GCTX.sql_proxy_);
+    if (OB_SUCCESS != worker_ret) {
+      LOG_WARN("failed to run ai column worker", K(worker_ret));
     }
   }
   LinkExecCtxGuard link_guard(result.get_session(), result.get_exec_context());
