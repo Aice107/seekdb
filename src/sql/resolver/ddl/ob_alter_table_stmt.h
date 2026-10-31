@@ -55,6 +55,18 @@ public:
   bool is_alter_triggers() const { return is_alter_triggers_; }
   void set_is_alter_triggers(const bool flag) { is_alter_triggers_ = flag; }
 
+  // ALTER TABLE ... RETRY AI COLUMN <col> WHERE <pred>: not a schema change, it re-queues
+  // the AI column tasks of the matched rows.
+  bool is_ai_column_retry() const { return is_ai_column_retry_; }
+  void set_ai_column_retry(const common::ObString &column_name, const common::ObString &where_sql)
+  {
+    is_ai_column_retry_ = true;
+    ai_retry_column_ = column_name;
+    ai_retry_where_ = where_sql;
+  }
+  const common::ObString &get_ai_retry_column() const { return ai_retry_column_; }
+  const common::ObString &get_ai_retry_where() const { return ai_retry_where_; }
+
   int set_origin_database_name(const common::ObString &origin_db_name);
   int set_origin_table_name(const common::ObString &origin_table_name);
   void set_table_id(const uint64_t table_id);
@@ -112,6 +124,9 @@ private:
   common::ObSArray<obcall::ObCreateIndexArg*> index_arg_list_;
   common::ObIAllocator *fts_arg_allocator_;
   bool is_alter_triggers_;
+  bool is_ai_column_retry_;
+  common::ObString ai_retry_column_;
+  common::ObString ai_retry_where_;
   obcall::ObAlterTriggerArg tg_arg_;
   uint64_t alter_table_action_count_;
   obcall::ObExchangePartitionArg exchange_partition_arg_;

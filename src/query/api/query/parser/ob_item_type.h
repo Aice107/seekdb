@@ -2113,6 +2113,7 @@ typedef enum ObItemType
   T_VEC_INDEX_COLUMN = 4691,
   T_VEC_INDEX_COLUMN_EXPR = 4692,
   T_AI_COLUMN = 4720,
+  T_ALTER_AI_COLUMN_RETRY = 4726,
 
   // for tablelock
   T_MYSQL_LOCK_LIST = 4698,

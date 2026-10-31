@@ -333,7 +333,7 @@ END_P SET_VAR DELIMITER
         QUANTIFIER_TABLE QUARTER QUERY QUEUE_TIME QUICK
 
         RECOVER REDUNDANT REFRESH RELAY RELAYLOG RELAY_LOG_FILE RELAY_LOG_POS RELAY_THREAD RELOAD REMOVE
-        REPEATABLE RESET RESPECT RESTART RESTORE RESUME RETURNED_SQLSTATE RETURNS RETURNING REVERSE
+        REPEATABLE RESET RESPECT RESTART RESTORE RESUME RETRY RETURNED_SQLSTATE RETURNS RETURNING REVERSE
         REWRITE ROLLBACK ROLLUP ROUTINE ROW ROWID ROW_COUNT ROW_FORMAT ROWS RTREE
         RUN RECYCLEBIN REPLICATION ROTATE ROW_NUMBER RUDUNDANT RECURSIVE RANDOM REDO_TRANSPORT_OPTIONS
         RANK READ_ONLY RECOVERY REJECT ROLE
@@ -14722,7 +14722,33 @@ alter_table_action
 ;
 
 alter_table_action:
-opt_set table_option_list_space_seperated
+RETRY AI COLUMN column_name WHERE expr
+{
+  (void)($6);
+  ParseNode *retry_node = NULL;
+  malloc_non_terminal_node(retry_node, result->malloc_pool_, T_ALTER_AI_COLUMN_RETRY, 1, $4);
+  if (OB_NOT_NULL(retry_node) && OB_NOT_NULL(result->input_sql_)
+      && @6.last_column >= @6.first_column) {
+    int64_t start_pos = @6.first_column - 1;
+    int64_t expr_len = @6.last_column - @6.first_column + 1;
+    retry_node->str_value_ = parse_strndup(result->input_sql_ + start_pos, expr_len,
+                                           result->malloc_pool_);
+    retry_node->str_len_ = (OB_NOT_NULL(retry_node->str_value_) ? expr_len : 0);
+  }
+  $$ = retry_node;
+}
+| RETRY AI COLUMN column_name
+{
+  ParseNode *retry_node = NULL;
+  malloc_non_terminal_node(retry_node, result->malloc_pool_, T_ALTER_AI_COLUMN_RETRY, 1, $4);
+  if (OB_NOT_NULL(retry_node)) {
+    const char *all_rows = "1 = 1";
+    retry_node->str_value_ = parse_strndup(all_rows, 5, result->malloc_pool_);
+    retry_node->str_len_ = (OB_NOT_NULL(retry_node->str_value_) ? 5 : 0);
+  }
+  $$ = retry_node;
+}
+| opt_set table_option_list_space_seperated
 {
   (void)$1;
   merge_nodes($$, result, T_TABLE_OPTION_LIST, $2);
