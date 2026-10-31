@@ -2697,6 +2697,82 @@ static int file_sql_split_csv_line(const ObString &line, ObIAllocator &alloc,
 }
 } // anonymous namespace
 
+
+// Column type inference for file sql (csv), close to DuckDB behavior so that the expected
+// results of the test suite match: integers become BIGINT, decimals DOUBLE, true/false
+// become 1/0, everything else stays VARCHAR and empty cells become NULL.
+enum FileSqlColumnType
+{
+  FILE_SQL_COL_VARCHAR = 0,
+  FILE_SQL_COL_INT,
+  FILE_SQL_COL_DOUBLE,
+  FILE_SQL_COL_BOOL
+};
+
+static bool file_sql_is_int(const ObString &text)
+{
+  bool ok = !text.empty();
+  int64_t i = 0;
+  if (ok && ('-' == text.ptr()[0] || '+' == text.ptr()[0])) {
+    i = 1;
+    ok = text.length() > 1;
+  }
+  for (; ok && i < text.length(); ++i) {
+    ok = (text.ptr()[i] >= '0' && text.ptr()[i] <= '9');
+  }
+  return ok;
+}
+
+static bool file_sql_is_double(const ObString &text)
+{
+  bool ok = !text.empty();
+  bool has_digit = false;
+  bool has_dot = false;
+  int64_t i = 0;
+  if (ok && ('-' == text.ptr()[0] || '+' == text.ptr()[0])) {
+    i = 1;
+    ok = text.length() > 1;
+  }
+  for (; ok && i < text.length(); ++i) {
+    const char c = text.ptr()[i];
+    if (c >= '0' && c <= '9') {
+      has_digit = true;
+    } else if ('.' == c && !has_dot) {
+      has_dot = true;
+    } else if ('e' != c && 'E' != c) {
+      ok = false;
+    }
+  }
+  return ok && has_digit && has_dot;
+}
+
+static void file_sql_infer_column_type(const ObIArray<ObString> &values,
+                                       FileSqlColumnType &type)
+{
+  bool all_int = true;
+  bool all_double = true;
+  bool all_bool = true;
+  for (int64_t i = 0; i < values.count(); ++i) {
+    const ObString v = values.at(i).trim();
+    if (v.empty()) {
+      continue;
+    }
+    if (all_int) {
+      all_int = file_sql_is_int(v);
+    }
+    if (all_double) {
+      all_double = file_sql_is_double(v);
+    }
+    if (all_bool) {
+      all_bool = (0 == v.case_compare("true") || 0 == v.case_compare("false"));
+    }
+  }
+  type = all_int ? FILE_SQL_COL_INT
+       : all_double ? FILE_SQL_COL_DOUBLE
+       : all_bool ? FILE_SQL_COL_BOOL
+       : FILE_SQL_COL_VARCHAR;
+}
+
 int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem *&table_item)
 {
   int ret = OB_SUCCESS;
@@ -2751,30 +2827,89 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
   }
   if (OB_SUCC(ret)) {
     const int64_t column_cnt = header.count();
-    if (NULL == (row_list = new_node(allocator_, T_VALUES_ROW_LIST, records.count() - 1))) {
+    ObSEArray<ObSEArray<ObString, 16> *, 32> rows;
+    for (int64_t r = 1; OB_SUCC(ret) && r < records.count(); ++r) {
+      void *mem = file_alloc.alloc(sizeof(ObSEArray<ObString, 16>));
+      if (OB_ISNULL(mem)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        ObSEArray<ObString, 16> *cells = new (mem) ObSEArray<ObString, 16>();
+        if (OB_FAIL(file_sql_split_csv_line(records.at(r), file_alloc, *cells))) {
+        } else if (cells->count() != column_cnt) {
+          ret = OB_INVALID_ARGUMENT;
+        } else if (OB_FAIL(rows.push_back(cells))) {
+        }
+      }
+    }
+    ObSEArray<FileSqlColumnType, 16> types;
+    for (int64_t c = 0; OB_SUCC(ret) && c < column_cnt; ++c) {
+      ObSEArray<ObString, 32> column_values;
+      for (int64_t r = 0; OB_SUCC(ret) && r < rows.count(); ++r) {
+        if (OB_FAIL(column_values.push_back(rows.at(r)->at(c)))) {
+        }
+      }
+      FileSqlColumnType type = FILE_SQL_COL_VARCHAR;
+      if (OB_SUCC(ret)) {
+        file_sql_infer_column_type(column_values, type);
+        if (OB_FAIL(types.push_back(type))) {
+        }
+      }
+    }
+    if (OB_SUCC(ret) && NULL == (row_list = new_node(allocator_, T_VALUES_ROW_LIST, rows.count()))) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
     }
-    for (int64_t r = 1; OB_SUCC(ret) && r < records.count(); ++r) {
-      ObSEArray<ObString, 16> cells;
+    for (int64_t r = 0; OB_SUCC(ret) && r < rows.count(); ++r) {
       ParseNode *vector = new_node(allocator_, T_VALUE_VECTOR, column_cnt);
-      if (OB_FAIL(file_sql_split_csv_line(records.at(r), file_alloc, cells))) {
-      } else if (OB_ISNULL(vector)) {
+      if (OB_ISNULL(vector)) {
         ret = OB_ALLOCATE_MEMORY_FAILED;
-      } else if (cells.count() != column_cnt) {
-        ret = OB_INVALID_ARGUMENT;
       } else {
         for (int64_t c = 0; OB_SUCC(ret) && c < column_cnt; ++c) {
-          ParseNode *literal = new_node(allocator_, T_VARCHAR, 0);
-          if (OB_ISNULL(literal)) {
-            ret = OB_ALLOCATE_MEMORY_FAILED;
+          const ObString raw = rows.at(r)->at(c).trim();
+          ParseNode *literal = NULL;
+          if (raw.empty()) {
+            if (NULL == (literal = new_node(allocator_, T_NULL, 0))) {
+              ret = OB_ALLOCATE_MEMORY_FAILED;
+            }
+          } else if (FILE_SQL_COL_INT == types.at(c) || FILE_SQL_COL_BOOL == types.at(c)) {
+            if (NULL == (literal = new_node(allocator_, T_INT, 0))) {
+              ret = OB_ALLOCATE_MEMORY_FAILED;
+            } else {
+              literal->value_ = (FILE_SQL_COL_BOOL == types.at(c))
+                                    ? ((0 == raw.case_compare("true")) ? 1 : 0)
+                                    : strtoll(raw.ptr(), NULL, 10);
+            }
+          } else if (FILE_SQL_COL_DOUBLE == types.at(c)) {
+            if (NULL == (literal = new_node(allocator_, T_NUMBER, 0))) {
+              ret = OB_ALLOCATE_MEMORY_FAILED;
+            } else {
+              literal->str_value_ = parse_strndup(raw.ptr(), raw.length(), allocator_);
+              literal->str_len_ = raw.length();
+            }
           } else {
-            literal->str_value_ = parse_strndup(cells.at(c).ptr(), cells.at(c).length(), allocator_);
-            literal->str_len_ = cells.at(c).length();
+            ObSqlString normalized;
+            for (int32_t k = 0; OB_SUCC(ret) && k < raw.length(); ++k) {
+              char ch = raw.ptr()[k];
+              if (10 == k && 'T' == ch) {
+                ch = ' ';
+              }
+              if (OB_FAIL(normalized.append_fmt("%c", ch))) {
+              }
+            }
+            if (OB_SUCC(ret)) {
+              if (NULL == (literal = new_node(allocator_, T_VARCHAR, 0))) {
+                ret = OB_ALLOCATE_MEMORY_FAILED;
+              } else {
+                literal->str_value_ = parse_strndup(normalized.ptr(), normalized.length(), allocator_);
+                literal->str_len_ = normalized.length();
+              }
+            }
+          }
+          if (OB_SUCC(ret)) {
             vector->children_[c] = literal;
           }
         }
         if (OB_SUCC(ret)) {
-          row_list->children_[r - 1] = vector;
+          row_list->children_[r] = vector;
         }
       }
     }
