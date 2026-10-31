@@ -1290,11 +1290,40 @@ int ObAiColumnStrictRead::check(ObSQLSessionInfo *session,
 static volatile bool g_ai_worker_thread_started = false;
 static volatile bool g_ai_worker_thread_stop = false;
 
+// The first AI model DDL of a fresh observer pays a one-time lazy initialization cost that
+// can exceed the 10s statement timeout on a loaded CI machine. Touch the same path once,
+// right after the server starts serving, so that user statements never pay for it.
+static void warm_up_ai_service_once(common::ObMySQLProxy *proxy)
+{
+  int ret = OB_SUCCESS;
+  sqlclient::ObISQLConnectionGuard conn_guard;
+  common::sqlclient::ObISQLConnection *conn = NULL;
+  int64_t affected_rows = 0;
+  if (OB_ISNULL(proxy)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_FAIL(proxy->acquire_connection(conn_guard, 0))) {
+  } else if (OB_ISNULL(conn = conn_guard.get_ptr())) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    // the model does not exist, the error is the expected outcome
+    (void)conn->execute_write("CALL DBMS_AI_SERVICE.DROP_AI_MODEL('__seekdb_ai_warmup__')",
+                              affected_rows);
+  }
+  if (OB_SUCCESS != ret) {
+    LOG_INFO("ai service warm up skipped", K(ret));
+  }
+}
+
 static void *ai_column_worker_loop(void *arg)
 {
   UNUSED(arg);
+  bool warmed_up = false;
   while (!g_ai_worker_thread_stop) {
     if (!GCTX.in_bootstrap_ && share::SS_SERVING == GCTX.status_ && OB_NOT_NULL(GCTX.sql_proxy_)) {
+      if (!warmed_up) {
+        warm_up_ai_service_once(GCTX.sql_proxy_);
+        warmed_up = true;
+      }
       int ret = ObAiColumnWorker::run_pending(GCTX.sql_proxy_);
       if (OB_SUCCESS != ret) {
         LOG_WARN("ai column background worker pass failed", K(ret));

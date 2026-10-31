@@ -61,6 +61,7 @@ int ObServer::get_lower_bound_freeze_info(const int64_t snapshot_version, share:
 #include "sql/ob_sql_init.h"
 #include "sql/ob_sql_task.h"
 #include "sql/engine/cmd/ob_load_data_utils.h"
+#include "sql/engine/cmd/ob_table_executor.h"
 #include "storage/tx_table/ob_tx_data_cache.h"
 #include "storage/tx/ob_ts_mgr.h"
 #include "storage/ob_file_system_router.h"
@@ -1349,6 +1350,9 @@ int ObServer::start()
   } else if (!stop_) {
     GCTX.status_ = SS_SERVING;
     GCTX.start_service_time_ = start_service_time;
+    // Start the AI column worker early so that its one-time AI service warm up overlaps the
+    // (fast) first user statements instead of the first AI model DDL.
+    sql::ObAiColumnWorker::ensure_background_thread_started();
     FLOG_INFO("[OBSERVER_NOTICE] observer start service", "start_service_time", GCTX.start_service_time_);
     LOG_DBA_INFO_V2(OB_SERVER_START_SUCCESS,
                     DBA_STEP_INC_INFO(server_start),
