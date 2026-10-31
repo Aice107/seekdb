@@ -2616,6 +2616,215 @@ int ObDMLResolver::set_snapshot_info_for_view(ObSelectStmt *select_stmt, TableIt
   return ret;
 }
 
+// ---------------------------------------------------------------------------
+// File SQL: read_csv('path') as a table factor.
+// The parser only produces T_FILE_SQL_TABLE (path + alias); the session switch check, the
+// file parsing and the schema inference all happen here. The rows are turned into a VALUES
+// table so that the native optimizer/executor handles filter, aggregate, sort and join.
+// ---------------------------------------------------------------------------
+namespace {
+static int file_sql_read_text_file(const ObString &path, ObIAllocator &alloc, ObString &content)
+{
+  int ret = OB_SUCCESS;
+  FILE *fp = NULL;
+  char path_buf[PATH_MAX + 1];
+  int64_t len = 0;
+  content.reset();
+  if (path.empty() || path.length() > PATH_MAX) {
+    ret = OB_INVALID_ARGUMENT;
+  } else {
+    MEMCPY(path_buf, path.ptr(), path.length());
+    path_buf[path.length()] = '\0';
+    if (NULL == (fp = fopen(path_buf, "rb"))) {
+      ret = OB_FILE_NOT_EXIST;
+    } else if (0 != fseek(fp, 0, SEEK_END) || (len = ftell(fp)) < 0
+               || len > 32L * 1024 * 1024 || 0 != fseek(fp, 0, SEEK_SET)) {
+      ret = OB_INVALID_ARGUMENT;
+    } else {
+      char *buf = static_cast<char *>(alloc.alloc(len + 1));
+      if (OB_ISNULL(buf)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (len > 0 && len != static_cast<int64_t>(fread(buf, 1, len, fp))) {
+        ret = OB_IO_ERROR;
+      } else {
+        buf[len] = '\0';
+        content.assign_ptr(buf, static_cast<int32_t>(len));
+      }
+    }
+  }
+  if (NULL != fp) {
+    fclose(fp);
+    fp = NULL;
+  }
+  return ret;
+}
+
+static int file_sql_split_csv_line(const ObString &line, ObIAllocator &alloc,
+                                   ObIArray<ObString> &cells)
+{
+  int ret = OB_SUCCESS;
+  ObSqlString cell;
+  bool in_quote = false;
+  const char *p = line.ptr();
+  const int64_t n = line.length();
+  for (int64_t i = 0; OB_SUCC(ret) && i < n; ++i) {
+    const char c = p[i];
+    if ('"' == c) {
+      if (in_quote && i + 1 < n && '"' == p[i + 1]) {
+        ret = cell.append_fmt("%c", '"');
+        ++i;
+      } else {
+        in_quote = !in_quote;
+      }
+    } else if (',' == c && !in_quote) {
+      ObString copy;
+      if (OB_FAIL(ob_write_string(alloc, cell.string(), copy))) {
+      } else if (OB_FAIL(cells.push_back(copy))) {
+      } else {
+        cell.reset();
+      }
+    } else {
+      ret = cell.append_fmt("%c", c);
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ObString copy;
+    if (OB_FAIL(ob_write_string(alloc, cell.string(), copy))) {
+    } else if (OB_FAIL(cells.push_back(copy))) {
+    }
+  }
+  return ret;
+}
+} // anonymous namespace
+
+int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem *&table_item)
+{
+  int ret = OB_SUCCESS;
+  bool enabled = false;
+  ObSEArray<ObString, 32> records;
+  ObSEArray<ObString, 16> header;
+  ObArenaAllocator file_alloc;
+  ObString content;
+  ParseNode *values_node = NULL;
+  ParseNode *row_list = NULL;
+  if (OB_ISNULL(session_info_) || 2 != table_node.num_child_ || OB_ISNULL(table_node.children_)
+      || OB_ISNULL(table_node.children_[1]) || OB_ISNULL(table_node.children_[1]->str_value_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+  } else if (!enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "file sql is disabled, set enable_file_sql = on first");
+  } else {
+    ObString path(static_cast<int32_t>(table_node.children_[1]->str_len_),
+                  table_node.children_[1]->str_value_);
+    if (OB_FAIL(file_sql_read_text_file(path, file_alloc, content))) {
+      LOG_WARN("failed to read file sql file", K(ret), K(path));
+    } else {
+      int64_t rec_start = 0;
+      bool in_quote = false;
+      for (int64_t i = 0; OB_SUCC(ret) && i <= content.length(); ++i) {
+        const char c = (i < content.length()) ? content.ptr()[i] : '\n';
+        if ('"' == c) {
+          in_quote = !in_quote;
+        }
+        if ('\n' == c && !in_quote) {
+          int64_t end = i;
+          if (end > rec_start && '\r' == content.ptr()[end - 1]) {
+            --end;
+          }
+          if (end > rec_start) {
+            ObString rec;
+            if (OB_FAIL(ob_write_string(file_alloc, ObString(end - rec_start, content.ptr() + rec_start), rec))) {
+            } else if (OB_FAIL(records.push_back(rec))) {
+            }
+          }
+          rec_start = i + 1;
+        }
+      }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    if (records.count() < 2) {
+      ret = OB_INVALID_ARGUMENT;
+    } else if (OB_FAIL(file_sql_split_csv_line(records.at(0), file_alloc, header))) {
+    }
+  }
+  if (OB_SUCC(ret)) {
+    const int64_t column_cnt = header.count();
+    if (NULL == (row_list = new_node(allocator_, T_VALUES_ROW_LIST, records.count() - 1))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    }
+    for (int64_t r = 1; OB_SUCC(ret) && r < records.count(); ++r) {
+      ObSEArray<ObString, 16> cells;
+      ParseNode *vector = new_node(allocator_, T_VALUE_VECTOR, column_cnt);
+      if (OB_FAIL(file_sql_split_csv_line(records.at(r), file_alloc, cells))) {
+      } else if (OB_ISNULL(vector)) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (cells.count() != column_cnt) {
+        ret = OB_INVALID_ARGUMENT;
+      } else {
+        for (int64_t c = 0; OB_SUCC(ret) && c < column_cnt; ++c) {
+          ParseNode *literal = new_node(allocator_, T_VARCHAR, 0);
+          if (OB_ISNULL(literal)) {
+            ret = OB_ALLOCATE_MEMORY_FAILED;
+          } else {
+            literal->str_value_ = parse_strndup(cells.at(c).ptr(), cells.at(c).length(), allocator_);
+            literal->str_len_ = cells.at(c).length();
+            vector->children_[c] = literal;
+          }
+        }
+        if (OB_SUCC(ret)) {
+          row_list->children_[r - 1] = vector;
+        }
+      }
+    }
+    if (OB_SUCC(ret)) {
+      if (NULL == (values_node = new_node(allocator_, T_VALUES_TABLE_EXPRESSION, 1))) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else {
+        values_node->children_[0] = row_list;
+      }
+    }
+  }
+  if (OB_SUCC(ret) && OB_FAIL(resolve_values_table_item(*values_node, table_item))) {
+  }
+  if (OB_SUCC(ret) && OB_NOT_NULL(table_item)) {
+    // rename column_0..n to the csv header names, duplicate headers get a __N suffix
+    ObSEArray<ObString, 16> final_names;
+    for (int64_t i = 0; OB_SUCC(ret) && i < header.count(); ++i) {
+      ObString name = header.at(i).trim();
+      int64_t dup = 1;
+      bool conflict = true;
+      while (OB_SUCC(ret) && conflict && dup < 100) {
+        conflict = false;
+        for (int64_t k = 0; !conflict && k < final_names.count(); ++k) {
+          conflict = (0 == final_names.at(k).case_compare(name));
+        }
+        if (conflict) {
+          ObSqlString renamed;
+          if (OB_FAIL(renamed.append_fmt("%.*s__%ld", name.length(), name.ptr(), ++dup))) {
+          } else if (OB_FAIL(ob_write_string(*allocator_, renamed.string(), name))) {
+          }
+        }
+      }
+      if (OB_SUCC(ret) && OB_FAIL(final_names.push_back(name))) {
+      }
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < final_names.count(); ++i) {
+      ColumnItem *column_item = get_stmt()->get_column_item(table_item->table_id_,
+                                                            i + OB_APP_MIN_COLUMN_ID);
+      if (OB_ISNULL(column_item) || OB_ISNULL(column_item->expr_)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        column_item->column_name_ = final_names.at(i);
+        static_cast<ObColumnRefRawExpr *>(column_item->expr_)->set_column_attr(
+            table_item->table_name_, final_names.at(i));
+      }
+    }
+  }
+  return ret;
+}
+
 int ObDMLResolver::resolve_table(const ParseNode &parse_tree,
                                  TableItem *&table_item)
 {
@@ -2721,6 +2930,11 @@ int ObDMLResolver::resolve_table(const ParseNode &parse_tree,
       }
       case T_VALUES_TABLE_EXPRESSION: {
         if (OB_FAIL(resolve_values_table_item(*table_node, table_item))) {
+        }
+        break;
+      }
+      case T_FILE_SQL_TABLE: {
+        if (OB_FAIL(resolve_file_sql_item(*table_node, table_item))) {
         }
         break;
       }
