@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_ENG
 
 #include "ob_table_modify_op.h"
+#include "sql/engine/cmd/ob_table_executor.h"
 #include "share/ob_autoincrement_service.h"
 #include "query/session/ob_inner_sql_connection_access.h"
 #include "sql/engine/ob_physical_plan.h"
@@ -637,8 +638,13 @@ int ObTableModifyOp::inner_open()
 {
   int ret = OB_SUCCESS;
   ObSQLSessionInfo *my_session = GET_MY_SESSION(ctx_);
+  const ObDMLBaseCtDef *ai_check_ctdef = nullptr;
   if (OB_FAIL(init_foreign_key_operation())) {
   } else if (MY_SPEC.plan_->has_nested_sql() && OB_FAIL(open_inner_conn())) {
+  } else if (OB_FAIL(get_spec().get_single_dml_ctdef(ai_check_ctdef))) {
+  } else if (OB_NOT_NULL(ai_check_ctdef) && OB_FAIL(ObAiColumnStrictRead::check(
+                 my_session, ai_check_ctdef->das_base_ctdef_.index_tid_,
+                 ai_check_ctdef->column_ids_))) {
   } else if (OB_FAIL(calc_single_table_loc())) {
   } else if (OB_FAIL(check_need_exec_single_row())) {
   } else {

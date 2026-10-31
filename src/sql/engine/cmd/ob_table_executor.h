@@ -313,6 +313,16 @@ public:
   static int drain_for_session(uint64_t session_id, common::ObMySQLProxy *proxy);
 };
 
+class ObAiColumnStrictRead
+{
+public:
+  // With ai_column_strict_read = ON a statement that reads an AI column whose result is not
+  // ready for every row must fail (column level check, not row level).
+  static int check(ObSQLSessionInfo *session,
+                   const uint64_t table_id,
+                   const common::ObIArray<uint64_t> &column_ids);
+};
+
 class ObAiColumnWorker
 {
 public:

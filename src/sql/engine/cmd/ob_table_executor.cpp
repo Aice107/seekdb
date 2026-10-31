@@ -1158,6 +1158,127 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
   return ret;
 }
 
+// Rows of the AI column that still have no value (pending or finally failed).
+static int count_ai_column_null_rows(common::ObMySQLProxy *proxy,
+                                     share::schema::ObSchemaGetterGuard &guard,
+                                     const share::schema::ObTableSchema &table_schema,
+                                     const share::schema::ObColumnSchemaV2 &column,
+                                     int64_t &null_rows)
+{
+  int ret = OB_SUCCESS;
+  const share::schema::ObDatabaseSchema *db_schema = NULL;
+  null_rows = 0;
+  ObSqlString sql;
+  if (OB_ISNULL(proxy)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_FAIL(guard.get_database_schema(table_schema.get_database_id(), db_schema))) {
+  } else if (OB_ISNULL(db_schema)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(sql.append_fmt("SELECT count(*) FROM `%.*s`.`%.*s` WHERE `%.*s` IS NULL",
+                                    db_schema->get_database_name_str().length(),
+                                    db_schema->get_database_name_str().ptr(),
+                                    table_schema.get_table_name_str().length(),
+                                    table_schema.get_table_name_str().ptr(),
+                                    column.get_column_name_str().length(),
+                                    column.get_column_name_str().ptr()))) {
+  } else {
+    SMART_VAR(ObMySQLProxy::MySQLResult, res) {
+      common::sqlclient::ObMySQLResult *result = NULL;
+      if (OB_FAIL(proxy->read(res, sql.ptr()))) {
+      } else if (OB_ISNULL(result = res.get_result())) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(result->next())) {
+        if (OB_ITER_END == ret) {
+          ret = OB_SUCCESS;
+        }
+      } else if (OB_FAIL(result->get_int(static_cast<int64_t>(0), null_rows))) {
+      }
+    }
+  }
+  return ret;
+}
+
+// Number of not-yet-published tasks of one AI column of one table.
+static int count_pending_ai_tasks(common::ObMySQLProxy *proxy, const uint64_t table_id,
+                                  const uint64_t column_id, int64_t &pending_cnt)
+{
+  int ret = OB_SUCCESS;
+  ObSqlString sql;
+  pending_cnt = 0;
+  if (OB_ISNULL(proxy)) {
+    ret = OB_NOT_INIT;
+  } else if (OB_FAIL(sql.append_fmt("SELECT count(*) FROM %s WHERE table_id = %lu AND column_id = %lu",
+                                    OB_ALL_AI_COLUMN_TASK_TNAME, table_id, column_id))) {
+  } else {
+    SMART_VAR(ObMySQLProxy::MySQLResult, res) {
+      common::sqlclient::ObMySQLResult *result = NULL;
+      if (OB_FAIL(proxy->read(res, sql.ptr()))) {
+      } else if (OB_ISNULL(result = res.get_result())) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(result->next())) {
+        if (OB_ITER_END == ret) {
+          ret = OB_SUCCESS;
+        }
+      } else if (OB_FAIL(result->get_int(static_cast<int64_t>(0), pending_cnt))) {
+      }
+    }
+  }
+  return ret;
+}
+
+int ObAiColumnStrictRead::check(ObSQLSessionInfo *session,
+                                const uint64_t table_id,
+                                const common::ObIArray<uint64_t> &column_ids)
+{
+  int ret = OB_SUCCESS;
+  bool strict_read = false;
+  if (OB_ISNULL(session) || OB_INVALID_ID == table_id || column_ids.empty()) {
+  } else if (OB_FAIL(session->get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ, strict_read))) {
+  } else if (!strict_read) {
+  } else {
+    share::schema::ObSchemaGetterGuard guard;
+    const share::schema::ObTableSchema *table_schema = NULL;
+    if (OB_ISNULL(GCTX.schema_service_)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_FAIL(GCTX.schema_service_->get_runtime_schema_guard(guard))) {
+    } else if (OB_FAIL(guard.get_table_schema(table_id, table_schema))) {
+    } else if (OB_ISNULL(table_schema)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      for (int64_t i = 0; OB_SUCC(ret) && i < column_ids.count(); ++i) {
+        const share::schema::ObColumnSchemaV2 *column =
+            table_schema->get_column_schema(column_ids.at(i));
+        if (OB_ISNULL(column)) {
+        } else if (column->is_hidden()) {
+        } else {
+          ObString column_name = column->get_column_name_str();
+          char state_name[OB_MAX_COLUMN_NAME_LENGTH];
+          int64_t state_len = snprintf(state_name, sizeof(state_name), "__ai_state_%.*s",
+                                       column_name.length(), column_name.ptr());
+          if (OB_NOT_NULL(table_schema->get_column_schema(
+                  ObString(static_cast<int32_t>(state_len), state_name)))) {
+            int64_t pending = 0;
+            int64_t not_ready_rows = 0;
+            if (OB_FAIL(count_pending_ai_tasks(GCTX.sql_proxy_, table_id,
+                                               column->get_column_id(), pending))) {
+            } else if (pending > 0) {
+              ret = OB_AI_COLUMN_NOT_READY;
+              LOG_USER_ERROR(OB_AI_COLUMN_NOT_READY, column_name.length(), column_name.ptr());
+            } else if (OB_FAIL(count_ai_column_null_rows(GCTX.sql_proxy_, guard, *table_schema,
+                                                         *column, not_ready_rows))) {
+            } else if (not_ready_rows > 0) {
+              // a row whose result is NULL without a pending task reached its final failed state
+              ret = OB_AI_COLUMN_NOT_READY;
+              LOG_USER_ERROR(OB_AI_COLUMN_NOT_READY, column_name.length(), column_name.ptr());
+            }
+          }
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 static volatile bool g_ai_worker_thread_started = false;
 static volatile bool g_ai_worker_thread_stop = false;
 
