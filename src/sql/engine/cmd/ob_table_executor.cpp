@@ -1128,9 +1128,17 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
         ObSqlString fix;
         if (OB_SUCCESS != tmp_ret) {
           LOG_WARN("ai column group evaluation failed", K(tmp_ret), K(upd));
+          // A row locked by an open transaction is not a model failure: keep the task pending
+          // and retry later instead of burning the retry budget.
+          const bool deferred = (OB_TRY_LOCK_ROW_CONFLICT == tmp_ret || OB_TIMEOUT == tmp_ret
+                                 || OB_TRANS_STMT_NEED_RETRY == tmp_ret);
           for (int64_t m = 0; m < member_cnt; ++m) {
             const AiColumnTaskItem &item = tasks.at(members[m]);
-            if (item.retry_count_ + 1 > item.max_retries_) {
+            if (deferred) {
+              fix.append_fmt("UPDATE %s SET state = 0, "
+                             "eligible_ts = now(6) + interval 1 second WHERE task_id = %ld;",
+                             OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_);
+            } else if (item.retry_count_ + 1 > item.max_retries_) {
               fix.append_fmt("DELETE FROM %s WHERE task_id = %ld;",
                              OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_);
             } else {
