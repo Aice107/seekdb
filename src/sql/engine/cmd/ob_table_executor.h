@@ -319,6 +319,9 @@ public:
   // Processes pending rows of oceanbase.__all_ai_column_task.
   // Swallows and logs all errors: it must never fail the caller's statement.
   static int run_pending(common::ObMySQLProxy *proxy);
+  // Starts the background worker thread once (idempotent). The thread claims tasks
+  // atomically and keeps running independently of any client statement.
+  static void ensure_background_thread_started();
 };
 
 } //end namespace sql

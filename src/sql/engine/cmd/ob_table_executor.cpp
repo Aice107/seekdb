@@ -995,7 +995,8 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
           "JOIN %s a ON a.table_id = t.table_id AND a.column_id = t.column_id "
           "JOIN %s tb ON tb.table_id = t.table_id "
           "JOIN %s d ON d.database_id = tb.database_id "
-          "WHERE t.state IN (0, 3) AND t.eligible_ts <= now(6) "
+          "WHERE (t.state IN (0, 3) AND t.eligible_ts <= now(6)) "
+          "OR (t.state = 1 AND t.eligible_ts < now(6) - interval 60 second) "
           "ORDER BY t.task_id LIMIT 8",
           OB_ALL_AI_COLUMN_TASK_TNAME,
           OB_ALL_AI_COLUMN_TNAME,
@@ -1058,38 +1059,92 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
         ret = OB_SUCCESS;
       }
     }
-    for (int64_t i = 0; OB_SUCC(ret) && i < tasks.count(); ++i) {
+    // Claim every task first: a task can be owned by exactly one worker, otherwise the same
+    // model request would be executed twice.
+    int64_t claimed[8];
+    int64_t claimed_cnt = 0;
+    bool used[8];
+    MEMSET(used, 0, sizeof(used));
+    for (int64_t i = 0; OB_SUCC(ret) && i < tasks.count() && i < 8; ++i) {
       const AiColumnTaskItem &item = tasks.at(i);
+      ObSqlString claim;
+      int64_t claimed_rows = 0;
+      if (OB_FAIL(claim.append_fmt("UPDATE %s SET state = 1 WHERE task_id = %ld AND state IN (0, 3)",
+                                   OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_))) {
+      } else if (OB_FAIL(conn->execute_write(claim.string(), claimed_rows))) {
+        LOG_WARN("failed to claim ai column task", K(ret), K(claim));
+      } else if (1 == claimed_rows) {
+        claimed[claimed_cnt++] = i;
+      }
+    }
+    // Publish one row group at a time: every AI column of the same row is written by a
+    // single UPDATE, so the results of one change become visible atomically.
+    for (int64_t g = 0; OB_SUCC(ret) && g < claimed_cnt; ++g) {
+      if (used[g]) {
+        continue;
+      }
+      used[g] = true;
+      const AiColumnTaskItem &head = tasks.at(claimed[g]);
+      int64_t members[8];
+      int64_t member_cnt = 0;
+      members[member_cnt++] = claimed[g];
+      for (int64_t h = g + 1; h < claimed_cnt; ++h) {
+        if (used[h]) {
+          continue;
+        }
+        const AiColumnTaskItem &other = tasks.at(claimed[h]);
+        if (other.table_id_ == head.table_id_
+            && 0 == other.db_.compare(head.db_)
+            && 0 == other.table_.compare(head.table_)
+            && 0 == other.predicate_.compare(head.predicate_)) {
+          used[h] = true;
+          members[member_cnt++] = claimed[h];
+        }
+      }
       ObSqlString upd;
-      int64_t affected_rows = 0;
-      ObSqlString value_expr;
       ObSqlString dep_assignments;
-      if (OB_FAIL(build_ai_column_value_expr(item.raw_expr_, item.normalized_expr_, value_expr))) {
-      } else if (OB_FAIL(build_ai_dep_assignments(proxy, item.table_id_, dep_assignments))) {
-      } else if (OB_FAIL(upd.append_fmt("UPDATE `%.*s`.`%.*s` SET `%.*s` = (%.*s)%s%s WHERE %.*s",
-                                 item.db_.length(), item.db_.ptr(),
-                                 item.table_.length(), item.table_.ptr(),
-                                 item.column_.length(), item.column_.ptr(),
-                                 value_expr.length(), value_expr.ptr(),
-                                 dep_assignments.length() > 0 ? ", " : "",
-                                 dep_assignments.ptr(),
-                                 item.predicate_.length(), item.predicate_.ptr()))) {
-      } else {
-        ObSqlString fix;
+      if (OB_FAIL(upd.append_fmt("UPDATE `%.*s`.`%.*s` SET ",
+                                 head.db_.length(), head.db_.ptr(),
+                                 head.table_.length(), head.table_.ptr()))) {
+      }
+      for (int64_t m = 0; OB_SUCC(ret) && m < member_cnt; ++m) {
+        const AiColumnTaskItem &item = tasks.at(members[m]);
+        ObSqlString value_expr;
+        if (OB_FAIL(build_ai_column_value_expr(item.raw_expr_, item.normalized_expr_, value_expr))) {
+        } else if (OB_FAIL(upd.append_fmt("%s`%.*s` = (%.*s)", 0 == m ? "" : ", ",
+                                          item.column_.length(), item.column_.ptr(),
+                                          value_expr.length(), value_expr.ptr()))) {
+        }
+      }
+      if (OB_SUCC(ret) && OB_FAIL(build_ai_dep_assignments(proxy, head.table_id_, dep_assignments))) {
+      } else if (OB_SUCC(ret) && dep_assignments.length() > 0
+                 && OB_FAIL(upd.append_fmt(", %s", dep_assignments.ptr()))) {
+      } else if (OB_SUCC(ret) && OB_FAIL(upd.append_fmt(" WHERE %.*s",
+                                                       head.predicate_.length(), head.predicate_.ptr()))) {
+      }
+      if (OB_SUCC(ret)) {
+        int64_t affected_rows = 0;
         int tmp_ret = conn->execute_write(upd.string(), affected_rows);
+        ObSqlString fix;
         if (OB_SUCCESS != tmp_ret) {
-          LOG_WARN("ai column task evaluation failed", K(tmp_ret), K(upd));
-          if (item.retry_count_ + 1 > item.max_retries_) {
-            fix.append_fmt("DELETE FROM %s WHERE task_id = %ld",
-                           OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_);
-          } else {
-            fix.append_fmt("UPDATE %s SET retry_count = %ld, state = 3, "
-                           "eligible_ts = now(6) + interval 1 second WHERE task_id = %ld",
-                           OB_ALL_AI_COLUMN_TASK_TNAME, item.retry_count_ + 1, item.task_id_);
+          LOG_WARN("ai column group evaluation failed", K(tmp_ret), K(upd));
+          for (int64_t m = 0; m < member_cnt; ++m) {
+            const AiColumnTaskItem &item = tasks.at(members[m]);
+            if (item.retry_count_ + 1 > item.max_retries_) {
+              fix.append_fmt("DELETE FROM %s WHERE task_id = %ld;",
+                             OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_);
+            } else {
+              fix.append_fmt("UPDATE %s SET retry_count = %ld, state = 3, "
+                             "eligible_ts = now(6) + interval 1 second WHERE task_id = %ld;",
+                             OB_ALL_AI_COLUMN_TASK_TNAME, item.retry_count_ + 1, item.task_id_);
+            }
           }
         } else {
-          fix.append_fmt("DELETE FROM %s WHERE task_id = %ld",
-                         OB_ALL_AI_COLUMN_TASK_TNAME, item.task_id_);
+          fix.append_fmt("DELETE FROM %s WHERE task_id IN (", OB_ALL_AI_COLUMN_TASK_TNAME);
+          for (int64_t m = 0; m < member_cnt; ++m) {
+            fix.append_fmt("%s%ld", 0 == m ? "" : ", ", tasks.at(members[m]).task_id_);
+          }
+          fix.append_fmt(")");
         }
         int64_t row_affected = 0;
         if (OB_FAIL(conn->execute_write(fix.string(), row_affected))) {
@@ -1099,7 +1154,47 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
       }
     }
   }
+
   return ret;
+}
+
+static volatile bool g_ai_worker_thread_started = false;
+static volatile bool g_ai_worker_thread_stop = false;
+
+static void *ai_column_worker_loop(void *arg)
+{
+  UNUSED(arg);
+  while (!g_ai_worker_thread_stop) {
+    if (!GCTX.in_bootstrap_ && share::SS_SERVING == GCTX.status_ && OB_NOT_NULL(GCTX.sql_proxy_)) {
+      int ret = ObAiColumnWorker::run_pending(GCTX.sql_proxy_);
+      if (OB_SUCCESS != ret) {
+        LOG_WARN("ai column background worker pass failed", K(ret));
+      }
+    }
+    usleep(200 * 1000L);
+  }
+  return NULL;
+}
+
+void ObAiColumnWorker::ensure_background_thread_started()
+{
+  int ret = OB_SUCCESS;  // LOG_WARN expands to code referencing ret
+  if (!g_ai_worker_thread_started) {
+    static lib::ObMutex start_mutex;
+    lib::ObMutexGuard guard(start_mutex);
+    if (!g_ai_worker_thread_started) {
+      pthread_t tid;
+      int err = 0;
+      if (0 == (err = pthread_create(&tid, NULL, ai_column_worker_loop, NULL))) {
+        pthread_detach(tid);
+        g_ai_worker_thread_started = true;
+        LOG_INFO("ai column background worker started");
+      } else {
+        ret = OB_ERR_UNEXPECTED;
+        LOG_WARN("failed to start ai column background worker", K(ret), K(err));
+      }
+    }
+  }
 }
 
 int ObAiColumnWorker::run_pending(common::ObMySQLProxy *proxy)
