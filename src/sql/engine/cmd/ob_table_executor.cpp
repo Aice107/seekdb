@@ -701,10 +701,13 @@ int ObCreateTableExecutor::insert_ai_column_metadata(ObExecContext &ctx,
       } else if (OB_SUCC(ret)) {
         trg.reset();
       }
-      // 3) BEFORE UPDATE: drop the queued task of the old and the current row key so the
-      //    AFTER UPDATE trigger can insert exactly one fresh task (no duplicates).
+      // 3) AFTER UPDATE: drop the queued task of the old and the current row key so the
+      //    AFTER UPDATE trigger below can insert exactly one fresh task (no duplicates).
+      //    This has to be an AFTER trigger: a DML statement inside a BEFORE UPDATE trigger
+      //    corrupts the maintenance of a vector index on the same table (duplicate delete
+      //    marker, client error 1062), and the AI column table may carry such an index.
       if (OB_SUCC(ret) && OB_FAIL(trg.append_fmt(
-              "CREATE TRIGGER `__ai_upd_del_%ld_%ld` BEFORE UPDATE ON `%.*s`.`%.*s` "
+              "CREATE TRIGGER `__ai_upd_del_%ld_%ld` AFTER UPDATE ON `%.*s`.`%.*s` "
               "FOR EACH ROW DELETE FROM oceanbase.__all_ai_column_task "
               "WHERE table_id = %ld AND column_id = %ld "
               "AND (rowkey_predicate = %s OR rowkey_predicate = %s) AND (%s)",
