@@ -2783,7 +2783,8 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
   ObString content;
   ParseNode *values_node = NULL;
   ParseNode *row_list = NULL;
-  if (OB_ISNULL(session_info_) || 2 != table_node.num_child_ || OB_ISNULL(table_node.children_)
+  if (OB_ISNULL(session_info_) || table_node.num_child_ < 2 || 3 < table_node.num_child_
+      || OB_ISNULL(table_node.children_)
       || OB_ISNULL(table_node.children_[1]) || OB_ISNULL(table_node.children_[1]->str_value_)) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
@@ -2791,9 +2792,49 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
     ret = OB_NOT_SUPPORTED;
     LOG_USER_ERROR(OB_NOT_SUPPORTED, "file sql is disabled, set enable_file_sql = on first");
   } else {
+    if (OB_SUCC(ret) && 3 == table_node.num_child_ && OB_NOT_NULL(table_node.children_[2])) {
+      const ParseNode *args = table_node.children_[2];
+      for (int32_t a = 0; OB_SUCC(ret) && a < args->num_child_; ++a) {
+        const ParseNode *arg = args->children_[a];
+        if (OB_ISNULL(arg)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (T_FILE_SQL_ARG == arg->type_ && 2 == arg->num_child_
+                   && OB_NOT_NULL(arg->children_[0]) && OB_NOT_NULL(arg->children_[0]->str_value_)) {
+          const ParseNode *value = arg->children_[1];
+          ObString arg_name(static_cast<int32_t>(arg->children_[0]->str_len_),
+                            arg->children_[0]->str_value_);
+          if (0 == arg_name.case_compare("header")) {
+            // the header row is always consumed
+          } else if (0 == arg_name.case_compare("sample_size")) {
+            bool full_sample = (OB_NOT_NULL(value) && OB_NOT_NULL(value->str_value_)
+                                && 2 == value->str_len_ && '-' == value->str_value_[0]
+                                && '1' == value->str_value_[1]);
+            if (!full_sample) {
+              ret = OB_NOT_SUPPORTED;
+              LOG_USER_ERROR(OB_NOT_SUPPORTED, "sample_size other than -1");
+            }
+          } else {
+            ret = OB_NOT_SUPPORTED;
+            LOG_USER_ERROR(OB_NOT_SUPPORTED, "unknown file sql option");
+          }
+        } else if (OB_NOT_NULL(arg->str_value_)) {
+          if (0 != ObString(arg->str_len_, arg->str_value_).case_compare("csv")) {
+            // unsupported format name reports a parse error (1064)
+            ret = OB_ERR_PARSE_SQL;
+          }
+        } else {
+          ret = OB_ERR_PARSE_SQL;
+        }
+      }
+      if (OB_SUCC(ret)) {
+        const_cast<ParseNode &>(table_node).num_child_ = 2;
+      }
+    }
     ObString path(static_cast<int32_t>(table_node.children_[1]->str_len_),
                   table_node.children_[1]->str_value_);
-    if (OB_FAIL(file_sql_read_text_file(path, file_alloc, content))) {
+    if (OB_FAIL(ret)) {
+      // invalid option: stop resolving
+    } else if (OB_FAIL(file_sql_read_text_file(path, file_alloc, content))) {
       LOG_WARN("failed to read file sql file", K(ret), K(path));
     } else {
       int64_t rec_start = 0;

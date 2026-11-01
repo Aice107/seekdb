@@ -497,7 +497,7 @@ END_P SET_VAR DELIMITER
 %type <node> dynamic_sampling_hint
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters opt_ai_column_with
-%type <node> json_table_expr unnest_expr file_sql_expr mock_jt_on_error_on_empty jt_column_list json_table_column_def
+%type <node> json_table_expr unnest_expr file_sql_expr file_sql_arg mock_jt_on_error_on_empty jt_column_list json_table_column_def
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
 %type <node> table_values_clause table_values_clause_with_order_by_and_limit values_row_list row_value
@@ -16694,6 +16694,54 @@ NAME_OB '(' STRING_VALUE ')'
   ParseNode *file_node = NULL;
   malloc_non_terminal_node(file_node, result->malloc_pool_, T_FILE_SQL_TABLE, 2, $1, $3);
   malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, 2, file_node, $5);
+}
+| NAME_OB '(' STRING_VALUE ',' file_sql_arg ')'
+{
+  ParseNode *args = NULL;
+  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 1, $5);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
+}
+| NAME_OB '(' STRING_VALUE ',' file_sql_arg ',' file_sql_arg ')'
+{
+  ParseNode *args = NULL;
+  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 2, $5, $7);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
+}
+| NAME_OB '(' STRING_VALUE ',' file_sql_arg ')' relation_name
+{
+  ParseNode *file_node = NULL;
+  ParseNode *args = NULL;
+  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 1, $5);
+  malloc_non_terminal_node(file_node, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, 2, file_node, $7);
+}
+| NAME_OB '(' STRING_VALUE ',' file_sql_arg ',' file_sql_arg ')' relation_name
+{
+  ParseNode *file_node = NULL;
+  ParseNode *args = NULL;
+  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 2, $5, $7);
+  malloc_non_terminal_node(file_node, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, 2, file_node, $9);
+}
+;
+
+file_sql_arg:
+NAME_OB COMP_EQ literal
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_ARG, 2, $1, $3);
+}
+| NAME_OB COMP_EQ '-' INTNUM
+{
+  ParseNode *neg = NULL;
+  (void)($4);
+  malloc_terminal_node(neg, result->malloc_pool_, T_INT);
+  neg->str_value_ = parse_strndup("-1", 2, result->malloc_pool_);
+  neg->str_len_ = 2;
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_ARG, 2, $1, neg);
+}
+| literal
+{
+  $$ = $1;
 }
 ;
 json_table_expr:

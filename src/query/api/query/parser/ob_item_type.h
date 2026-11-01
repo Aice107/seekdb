@@ -2115,6 +2115,7 @@ typedef enum ObItemType
   T_AI_COLUMN = 4720,
   T_ALTER_AI_COLUMN_RETRY = 4726,
   T_FILE_SQL_TABLE = 4703,
+  T_FILE_SQL_ARG = 4704,
 
   // for tablelock
   T_MYSQL_LOCK_LIST = 4698,
