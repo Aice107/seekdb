@@ -38,6 +38,10 @@
 #include "sql/das/ob_domain_id.h"
 #include "query/vector/ob_vector_index_util.h"
 #include "sql/engine/expr/ob_expr_regexp.h"
+#include <glob.h>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include "sql/resolver/dcl/ob_dcl_resolver.h"
 #include "sql/resolver/ddl/ob_ddl_resolver.h"
 #include "sql/hybrid_search/ob_hybrid_search_executor.h"
@@ -2773,18 +2777,131 @@ static void file_sql_infer_column_type(const ObIArray<ObString> &values,
        : FILE_SQL_COL_VARCHAR;
 }
 
+// Parse a newline delimited JSON file into a text grid. Every object key becomes a column
+// (union in first-seen order), a missing key or a null becomes an empty cell.
+static int file_sql_read_jsonl(const ObString &content, ObIAllocator &alloc,
+                               ObIArray<ObString> &header,
+                               ObIArray<ObSEArray<ObString, 16> *> &rows)
+{
+  int ret = OB_SUCCESS;
+  int64_t line_start = 0;
+  for (int64_t i = 0; OB_SUCC(ret) && i <= content.length(); ++i) {
+    if (i == content.length() || '\n' == content.ptr()[i]) {
+      int64_t line_end = i;
+      while (line_end > line_start && ('\r' == content.ptr()[line_end - 1]
+                                       || ' ' == content.ptr()[line_end - 1])) {
+        --line_end;
+      }
+      if (line_end > line_start) {
+        rapidjson::Document doc;
+        doc.Parse(content.ptr() + line_start, line_end - line_start);
+        if (doc.HasParseError() || !doc.IsObject()) {
+          ret = OB_INVALID_ARGUMENT;
+        }
+        void *mem = NULL;
+        ObSEArray<ObString, 16> *cells = NULL;
+        if (OB_FAIL(ret)) {
+        } else if (OB_ISNULL(mem = alloc.alloc(sizeof(ObSEArray<ObString, 16>)))) {
+          ret = OB_ALLOCATE_MEMORY_FAILED;
+        } else {
+          cells = new (mem) ObSEArray<ObString, 16>();
+          // extend the header with keys that were not seen before
+          for (rapidjson::Value::ConstMemberIterator it = doc.MemberBegin();
+               OB_SUCC(ret) && it != doc.MemberEnd(); ++it) {
+            ObString key(static_cast<int32_t>(it->name.GetStringLength()),
+                         const_cast<char *>(it->name.GetString()));
+            bool known = false;
+            for (int64_t k = 0; !known && k < header.count(); ++k) {
+              known = (0 == header.at(k).case_compare(key));
+            }
+            if (!known) {
+              ObString copy;
+              if (OB_FAIL(ob_write_string(alloc, key, copy))) {
+              } else if (OB_FAIL(header.push_back(copy))) {
+              }
+            }
+          }
+          // one empty cell per column, then fill by walking the object members
+          for (int64_t k = 0; OB_SUCC(ret) && k < header.count(); ++k) {
+            if (OB_FAIL(cells->push_back(ObString()))) {
+            }
+          }
+          for (rapidjson::Value::ConstMemberIterator it = doc.MemberBegin();
+               OB_SUCC(ret) && it != doc.MemberEnd(); ++it) {
+            ObString key(static_cast<int32_t>(it->name.GetStringLength()),
+                         const_cast<char *>(it->name.GetString()));
+            int64_t slot = -1;
+            for (int64_t k = 0; -1 == slot && k < header.count(); ++k) {
+              if (0 == header.at(k).case_compare(key)) {
+                slot = k;
+              }
+            }
+            ObSqlString cell;
+            {
+              const rapidjson::Value &value = it->value;
+              if (value.IsString()) {
+                if (OB_FAIL(cell.append_fmt("%.*s", static_cast<int>(value.GetStringLength()),
+                                            value.GetString()))) {
+                }
+              } else if (value.IsBool()) {
+                if (OB_FAIL(cell.append_fmt("%s", value.GetBool() ? "true" : "false"))) {
+                }
+              } else if (value.IsInt64()) {
+                if (OB_FAIL(cell.append_fmt("%ld", value.GetInt64()))) {
+                }
+              } else if (value.IsNumber()) {
+                if (OB_FAIL(cell.append_fmt("%.15g", value.GetDouble()))) {
+                }
+              } else if (!value.IsNull()) {
+                rapidjson::StringBuffer buffer;
+                rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+                value.Accept(writer);
+                if (OB_FAIL(cell.append_fmt("%.*s", static_cast<int>(buffer.GetSize()),
+                                            buffer.GetString()))) {
+                }
+              }
+            }
+            ObString copy;
+            if (OB_FAIL(ret)) {
+            } else if (OB_FAIL(ob_write_string(alloc, cell.string(), copy))) {
+            } else if (slot >= 0) {
+              cells->at(slot) = copy;
+            }
+          }
+        }
+        if (OB_SUCC(ret) && OB_FAIL(rows.push_back(cells))) {
+        }
+      }
+      line_start = i + 1;
+    }
+  }
+  // later lines may introduce new keys: pad the earlier rows so every row has header.count() cells
+  if (OB_SUCC(ret)) {
+    for (int64_t r = 0; OB_SUCC(ret) && r < rows.count(); ++r) {
+      while (OB_SUCC(ret) && rows.at(r)->count() < header.count()) {
+        if (OB_FAIL(rows.at(r)->push_back(ObString()))) {
+        }
+      }
+    }
+  }
+  return ret;
+}
+
 int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem *&table_item)
 {
   int ret = OB_SUCCESS;
   bool enabled = false;
   ObSEArray<ObString, 32> records;
   ObSEArray<ObString, 16> header;
+  ObSEArray<ObSEArray<ObString, 16> *, 32> rows;
   ObArenaAllocator file_alloc;
   ObString content;
+  ObString func_name;
   ParseNode *values_node = NULL;
   ParseNode *row_list = NULL;
   if (OB_ISNULL(session_info_) || table_node.num_child_ < 2 || 3 < table_node.num_child_
       || OB_ISNULL(table_node.children_)
+      || OB_ISNULL(table_node.children_[0]) || OB_ISNULL(table_node.children_[0]->str_value_)
       || OB_ISNULL(table_node.children_[1]) || OB_ISNULL(table_node.children_[1]->str_value_)) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
@@ -2792,7 +2909,10 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
     ret = OB_NOT_SUPPORTED;
     LOG_USER_ERROR(OB_NOT_SUPPORTED, "file sql is disabled, set enable_file_sql = on first");
   } else {
-    if (OB_SUCC(ret) && 3 == table_node.num_child_ && OB_NOT_NULL(table_node.children_[2])) {
+    func_name.assign_ptr(table_node.children_[0]->str_value_,
+                         static_cast<int32_t>(table_node.children_[0]->str_len_));
+    // validate the trailing options: header / sample_size = -1 / format name
+    if (3 == table_node.num_child_ && OB_NOT_NULL(table_node.children_[2])) {
       const ParseNode *args = table_node.children_[2];
       for (int32_t a = 0; OB_SUCC(ret) && a < args->num_child_; ++a) {
         const ParseNode *arg = args->children_[a];
@@ -2804,8 +2924,9 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
           ObString arg_name(static_cast<int32_t>(arg->children_[0]->str_len_),
                             arg->children_[0]->str_value_);
           if (0 == arg_name.case_compare("header")) {
-            // the header row is always consumed
+            // the header row is always consumed for csv
           } else if (0 == arg_name.case_compare("sample_size")) {
+            // a literal keeps its text; only "-1" means full sample
             bool full_sample = (OB_NOT_NULL(value) && OB_NOT_NULL(value->str_value_)
                                 && 2 == value->str_len_ && '-' == value->str_value_[0]
                                 && '1' == value->str_value_[1]);
@@ -2813,13 +2934,19 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
               ret = OB_NOT_SUPPORTED;
               LOG_USER_ERROR(OB_NOT_SUPPORTED, "sample_size other than -1");
             }
+          } else if (0 == arg_name.case_compare("format")) {
+            ObString format = (OB_NOT_NULL(value) && OB_NOT_NULL(value->str_value_))
+                                  ? ObString(value->str_len_, value->str_value_) : ObString();
+            if (0 != format.case_compare("newline_delimited") && 0 != format.case_compare("csv")) {
+              ret = OB_ERR_PARSE_SQL;
+            }
           } else {
             ret = OB_NOT_SUPPORTED;
             LOG_USER_ERROR(OB_NOT_SUPPORTED, "unknown file sql option");
           }
         } else if (OB_NOT_NULL(arg->str_value_)) {
           if (0 != ObString(arg->str_len_, arg->str_value_).case_compare("csv")) {
-            // unsupported format name reports a parse error (1064)
+            // an unsupported format name is reported as a parse error (1064)
             ret = OB_ERR_PARSE_SQL;
           }
         } else {
@@ -2827,145 +2954,198 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
         }
       }
       if (OB_SUCC(ret)) {
+        // the options are meaningless to the rest of the statement
         const_cast<ParseNode &>(table_node).num_child_ = 2;
       }
     }
-    ObString path(static_cast<int32_t>(table_node.children_[1]->str_len_),
-                  table_node.children_[1]->str_value_);
     if (OB_FAIL(ret)) {
-      // invalid option: stop resolving
-    } else if (OB_FAIL(file_sql_read_text_file(path, file_alloc, content))) {
-      LOG_WARN("failed to read file sql file", K(ret), K(path));
+      // invalid option, stop resolving
     } else {
-      int64_t rec_start = 0;
-      bool in_quote = false;
-      for (int64_t i = 0; OB_SUCC(ret) && i <= content.length(); ++i) {
-        const char c = (i < content.length()) ? content.ptr()[i] : '\n';
-        if ('"' == c) {
-          in_quote = !in_quote;
-        }
-        if ('\n' == c && !in_quote) {
-          int64_t end = i;
-          if (end > rec_start && '\r' == content.ptr()[end - 1]) {
-            --end;
-          }
-          if (end > rec_start) {
-            ObString rec;
-            if (OB_FAIL(ob_write_string(file_alloc, ObString(end - rec_start, content.ptr() + rec_start), rec))) {
-            } else if (OB_FAIL(records.push_back(rec))) {
-            }
-          }
-          rec_start = i + 1;
-        }
-      }
-    }
-  }
-  if (OB_SUCC(ret)) {
-    if (records.count() < 2) {
-      ret = OB_INVALID_ARGUMENT;
-    } else if (OB_FAIL(file_sql_split_csv_line(records.at(0), file_alloc, header))) {
-    }
-  }
-  if (OB_SUCC(ret)) {
-    const int64_t column_cnt = header.count();
-    ObSEArray<ObSEArray<ObString, 16> *, 32> rows;
-    for (int64_t r = 1; OB_SUCC(ret) && r < records.count(); ++r) {
-      void *mem = file_alloc.alloc(sizeof(ObSEArray<ObString, 16>));
-      if (OB_ISNULL(mem)) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-      } else {
-        ObSEArray<ObString, 16> *cells = new (mem) ObSEArray<ObString, 16>();
-        if (OB_FAIL(file_sql_split_csv_line(records.at(r), file_alloc, *cells))) {
-        } else if (cells->count() != column_cnt) {
+      ObString path(static_cast<int32_t>(table_node.children_[1]->str_len_),
+                    table_node.children_[1]->str_value_);
+      if (0 == func_name.case_compare("glob")) {
+        glob_t matches;
+        int glob_ret = OB_SUCCESS;
+        char pattern[PATH_MAX + 1];
+        MEMSET(&matches, 0, sizeof(matches));
+        if (path.empty() || path.length() > PATH_MAX) {
           ret = OB_INVALID_ARGUMENT;
-        } else if (OB_FAIL(rows.push_back(cells))) {
-        }
-      }
-    }
-    ObSEArray<FileSqlColumnType, 16> types;
-    for (int64_t c = 0; OB_SUCC(ret) && c < column_cnt; ++c) {
-      ObSEArray<ObString, 32> column_values;
-      for (int64_t r = 0; OB_SUCC(ret) && r < rows.count(); ++r) {
-        if (OB_FAIL(column_values.push_back(rows.at(r)->at(c)))) {
-        }
-      }
-      FileSqlColumnType type = FILE_SQL_COL_VARCHAR;
-      if (OB_SUCC(ret)) {
-        file_sql_infer_column_type(column_values, type);
-        if (OB_FAIL(types.push_back(type))) {
-        }
-      }
-    }
-    if (OB_SUCC(ret) && NULL == (row_list = new_node(allocator_, T_VALUES_ROW_LIST, rows.count()))) {
-      ret = OB_ALLOCATE_MEMORY_FAILED;
-    }
-    for (int64_t r = 0; OB_SUCC(ret) && r < rows.count(); ++r) {
-      ParseNode *vector = new_node(allocator_, T_VALUE_VECTOR, column_cnt);
-      if (OB_ISNULL(vector)) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-      } else {
-        for (int64_t c = 0; OB_SUCC(ret) && c < column_cnt; ++c) {
-          const ObString raw = rows.at(r)->at(c).trim();
-          ParseNode *literal = NULL;
-          if (raw.empty()) {
-            if (NULL == (literal = new_node(allocator_, T_NULL, 0))) {
-              ret = OB_ALLOCATE_MEMORY_FAILED;
-            }
-          } else if (FILE_SQL_COL_INT == types.at(c) || FILE_SQL_COL_BOOL == types.at(c)) {
-            if (NULL == (literal = new_node(allocator_, T_INT, 0))) {
-              ret = OB_ALLOCATE_MEMORY_FAILED;
-            } else {
-              literal->value_ = (FILE_SQL_COL_BOOL == types.at(c))
-                                    ? ((0 == raw.case_compare("true")) ? 1 : 0)
-                                    : strtoll(raw.ptr(), NULL, 10);
-            }
-          } else if (FILE_SQL_COL_DOUBLE == types.at(c)) {
-            if (NULL == (literal = new_node(allocator_, T_NUMBER, 0))) {
-              ret = OB_ALLOCATE_MEMORY_FAILED;
-            } else {
-              literal->str_value_ = parse_strndup(raw.ptr(), raw.length(), allocator_);
-              literal->str_len_ = raw.length();
-            }
+        } else {
+          MEMCPY(pattern, path.ptr(), path.length());
+          pattern[path.length()] = '\0';
+          glob_ret = ::glob(pattern, 0, NULL, &matches);
+          if (0 != glob_ret && GLOB_NOMATCH != glob_ret) {
+            ret = OB_INVALID_ARGUMENT;
           } else {
-            ObSqlString normalized;
-            for (int32_t k = 0; OB_SUCC(ret) && k < raw.length(); ++k) {
-              char ch = raw.ptr()[k];
-              if (10 == k && 'T' == ch) {
-                ch = ' ';
-              }
-              if (OB_FAIL(normalized.append_fmt("%c", ch))) {
-              }
+            ObString file_column;
+            if (OB_FAIL(ob_write_string(file_alloc, ObString("file"), file_column))) {
+            } else if (OB_FAIL(header.push_back(file_column))) {
             }
-            if (OB_SUCC(ret)) {
-              if (NULL == (literal = new_node(allocator_, T_VARCHAR, 0))) {
+            for (size_t g = 0; OB_SUCC(ret) && g < matches.gl_pathc; ++g) {
+              void *mem = file_alloc.alloc(sizeof(ObSEArray<ObString, 16>));
+              ObSEArray<ObString, 16> *cells = NULL;
+              ObString file_path;
+              if (OB_ISNULL(mem)) {
                 ret = OB_ALLOCATE_MEMORY_FAILED;
               } else {
-                literal->str_value_ = parse_strndup(normalized.ptr(), normalized.length(), allocator_);
-                literal->str_len_ = normalized.length();
+                cells = new (mem) ObSEArray<ObString, 16>();
+                if (OB_FAIL(ob_write_string(file_alloc, ObString(matches.gl_pathv[g]), file_path))) {
+                } else if (OB_FAIL(cells->push_back(file_path))) {
+                } else if (OB_FAIL(rows.push_back(cells))) {
+                }
               }
             }
           }
-          if (OB_SUCC(ret)) {
-            vector->children_[c] = literal;
+          ::globfree(&matches);
+        }
+      } else if (OB_FAIL(file_sql_read_text_file(path, file_alloc, content))) {
+        LOG_WARN("failed to read file sql file", K(ret), K(path));
+      } else if (0 == func_name.case_compare("read_json")
+                 || 0 == func_name.case_compare("read_ndjson")) {
+        if (OB_FAIL(file_sql_read_jsonl(content, file_alloc, header, rows))) {
+          LOG_WARN("failed to parse json lines", K(ret), K(path));
+        }
+      } else if (0 == func_name.case_compare("read_csv")) {
+        int64_t rec_start = 0;
+        bool in_quote = false;
+        for (int64_t i = 0; OB_SUCC(ret) && i <= content.length(); ++i) {
+          const char c = (i < content.length()) ? content.ptr()[i] : '\n';
+          if ('"' == c) {
+            in_quote = !in_quote;
+          }
+          if ('\n' == c && !in_quote) {
+            int64_t end = i;
+            if (end > rec_start && '\r' == content.ptr()[end - 1]) {
+              --end;
+            }
+            if (end > rec_start) {
+              ObString rec;
+              if (OB_FAIL(ob_write_string(file_alloc,
+                                          ObString(end - rec_start, content.ptr() + rec_start),
+                                          rec))) {
+              } else if (OB_FAIL(records.push_back(rec))) {
+              }
+            }
+            rec_start = i + 1;
           }
         }
         if (OB_SUCC(ret)) {
-          row_list->children_[r] = vector;
+          if (records.count() < 2) {
+            ret = OB_INVALID_ARGUMENT;
+          } else if (OB_FAIL(file_sql_split_csv_line(records.at(0), file_alloc, header))) {
+          }
         }
+        for (int64_t r = 1; OB_SUCC(ret) && r < records.count(); ++r) {
+          void *mem = file_alloc.alloc(sizeof(ObSEArray<ObString, 16>));
+          ObSEArray<ObString, 16> *cells = NULL;
+          if (OB_ISNULL(mem)) {
+            ret = OB_ALLOCATE_MEMORY_FAILED;
+          } else {
+            cells = new (mem) ObSEArray<ObString, 16>();
+            if (OB_FAIL(file_sql_split_csv_line(records.at(r), file_alloc, *cells))) {
+            } else if (cells->count() != header.count()) {
+              ret = OB_INVALID_ARGUMENT;
+            } else if (OB_FAIL(rows.push_back(cells))) {
+            }
+          }
+        }
+      } else if (0 == func_name.case_compare("read_parquet")) {
+        ret = OB_NOT_SUPPORTED;
+        LOG_USER_ERROR(OB_NOT_SUPPORTED, "read_parquet is not implemented yet");
+      } else {
+        ret = OB_NOT_SUPPORTED;
+        LOG_USER_ERROR(OB_NOT_SUPPORTED, "unknown file sql function");
       }
     }
-    if (OB_SUCC(ret)) {
-      if (NULL == (values_node = new_node(allocator_, T_VALUES_TABLE_EXPRESSION, 1))) {
-        ret = OB_ALLOCATE_MEMORY_FAILED;
-      } else {
-        values_node->children_[0] = row_list;
+  }
+  if (OB_SUCC(ret)) {
+    if (header.empty()) {
+      ret = OB_INVALID_ARGUMENT;
+    } else if (NULL == (row_list = new_node(allocator_, T_VALUES_ROW_LIST, rows.count()))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    }
+  }
+  // infer one type per column, then emit the literals
+  ObSEArray<FileSqlColumnType, 16> types;
+  for (int64_t c = 0; OB_SUCC(ret) && c < header.count(); ++c) {
+    ObSEArray<ObString, 32> column_values;
+    for (int64_t r = 0; OB_SUCC(ret) && r < rows.count(); ++r) {
+      if (OB_FAIL(column_values.push_back(rows.at(r)->at(c)))) {
       }
+    }
+    FileSqlColumnType type = FILE_SQL_COL_VARCHAR;
+    if (OB_SUCC(ret)) {
+      file_sql_infer_column_type(column_values, type);
+      if (OB_FAIL(types.push_back(type))) {
+      }
+    }
+  }
+  for (int64_t r = 0; OB_SUCC(ret) && r < rows.count(); ++r) {
+    ParseNode *vector = new_node(allocator_, T_VALUE_VECTOR, header.count());
+    if (OB_ISNULL(vector)) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      for (int64_t c = 0; OB_SUCC(ret) && c < header.count(); ++c) {
+        const ObString raw = rows.at(r)->at(c).trim();
+        ParseNode *literal = NULL;
+        if (raw.empty()) {
+          if (NULL == (literal = new_node(allocator_, T_NULL, 0))) {
+            ret = OB_ALLOCATE_MEMORY_FAILED;
+          }
+        } else if (FILE_SQL_COL_INT == types.at(c) || FILE_SQL_COL_BOOL == types.at(c)) {
+          if (NULL == (literal = new_node(allocator_, T_INT, 0))) {
+            ret = OB_ALLOCATE_MEMORY_FAILED;
+          } else {
+            literal->value_ = (FILE_SQL_COL_BOOL == types.at(c))
+                                  ? ((0 == raw.case_compare("true")) ? 1 : 0)
+                                  : strtoll(raw.ptr(), NULL, 10);
+          }
+        } else if (FILE_SQL_COL_DOUBLE == types.at(c)) {
+          if (NULL == (literal = new_node(allocator_, T_NUMBER, 0))) {
+            ret = OB_ALLOCATE_MEMORY_FAILED;
+          } else {
+            literal->str_value_ = parse_strndup(raw.ptr(), raw.length(), allocator_);
+            literal->str_len_ = raw.length();
+          }
+        } else {
+          ObSqlString normalized;
+          for (int32_t k = 0; OB_SUCC(ret) && k < raw.length(); ++k) {
+            char ch = raw.ptr()[k];
+            if (10 == k && 'T' == ch) {
+              ch = ' ';
+            }
+            if (OB_FAIL(normalized.append_fmt("%c", ch))) {
+            }
+          }
+          if (OB_SUCC(ret)) {
+            if (NULL == (literal = new_node(allocator_, T_VARCHAR, 0))) {
+              ret = OB_ALLOCATE_MEMORY_FAILED;
+            } else {
+              literal->str_value_ = parse_strndup(normalized.ptr(), normalized.length(), allocator_);
+              literal->str_len_ = normalized.length();
+            }
+          }
+        }
+        if (OB_SUCC(ret)) {
+          vector->children_[c] = literal;
+        }
+      }
+      if (OB_SUCC(ret)) {
+        row_list->children_[r] = vector;
+      }
+    }
+  }
+  if (OB_SUCC(ret)) {
+    if (NULL == (values_node = new_node(allocator_, T_VALUES_TABLE_EXPRESSION, 1))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else {
+      values_node->children_[0] = row_list;
     }
   }
   if (OB_SUCC(ret) && OB_FAIL(resolve_values_table_item(*values_node, table_item))) {
   }
   if (OB_SUCC(ret) && OB_NOT_NULL(table_item)) {
-    // rename column_0..n to the csv header names, duplicate headers get a __N suffix
+    // rename column_0..n to the file column names, duplicate headers get a __N suffix
     ObSEArray<ObString, 16> final_names;
     for (int64_t i = 0; OB_SUCC(ret) && i < header.count(); ++i) {
       ObString name = header.at(i).trim();

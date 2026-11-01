@@ -16730,6 +16730,12 @@ NAME_OB COMP_EQ literal
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_ARG, 2, $1, $3);
 }
+| FORMAT COMP_EQ literal
+{
+  ParseNode *name_node = NULL;
+  make_name_node(name_node, result->malloc_pool_, "format");
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_ARG, 2, name_node, $3);
+}
 | NAME_OB COMP_EQ '-' INTNUM
 {
   ParseNode *neg = NULL;
