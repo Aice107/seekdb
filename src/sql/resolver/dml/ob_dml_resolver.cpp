@@ -5916,6 +5916,23 @@ int ObDMLResolver::resolve_approx_clause(const ParseNode *approx_node)
       }
       if (OB_SUCC(ret) && is_match && is_vec_index_valid && tmp_expr->get_expr_type() != T_FUN_SYS_INNER_PRODUCT) {
         stmt->set_has_vec_approx(true);
+        // A NULL vector can not take part in an approximate (ANN) search: the index scan may
+        // still hand out a row whose stored vector was invalidated (set to NULL by the AI
+        // column layer), so such rows are filtered out here.
+        if (tmp_expr->get_param_count() > 0) {
+          ObRawExpr *col_expr = tmp_expr->get_param_expr(0);
+          ObRawExpr *not_null_expr = NULL;
+          if (OB_NOT_NULL(col_expr) && col_expr->is_column_ref_expr()) {
+            if (OB_FAIL(ObRawExprUtils::build_is_not_null_expr(*params_.expr_factory_,
+                                                               col_expr,
+                                                               true,
+                                                               not_null_expr))) {
+            } else if (OB_ISNULL(not_null_expr)) {
+              ret = OB_ERR_UNEXPECTED;
+            } else if (OB_FAIL(stmt->get_condition_exprs().push_back(not_null_expr))) {
+            }
+          }
+        }
       }
       if (OB_SUCC(ret) && !has_const) {
         // if has vector expr, but no const param, not support use vector index
