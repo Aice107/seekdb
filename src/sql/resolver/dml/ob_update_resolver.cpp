@@ -130,7 +130,8 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
 
   // 3. resolve other clauses
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(try_add_remove_const_expr_for_assignments())) {
+    if (OB_FAIL(add_ai_vector_invalidation_assignments())) {
+    } else if (OB_FAIL(try_add_remove_const_expr_for_assignments())) {
     } else if (OB_FAIL(resolve_update_constraints())) {
     } else if (OB_FAIL(resolve_hints(parse_tree.children_[HINT]))) {
     } else if (OB_FAIL(resolve_where_clause(parse_tree.children_[WHERE]))) {
@@ -149,6 +150,126 @@ int ObUpdateResolver::resolve(const ParseNode &parse_tree)
     } else if (OB_FAIL(update_stmt->check_dml_source_from_join())) {
     } else if (OB_FAIL(check_safe_update_mode(update_stmt))) {
     } else { /*do nothing*/ }
+  }
+  return ret;
+}
+
+// AI COLUMN vector invalidation at resolve time: when the statement changes a dependency
+// column of a vector AI column and does not assign the AI column itself, add "ai = NULL"
+// so that the normal DML path writes the NULL (a trigger can not read the vector column and
+// a runtime datum patch does not survive the row image of an indexed table).
+namespace {
+static bool ai_vec_is_vector_column(const share::schema::ObColumnSchemaV2 &column)
+{
+  bool is_vector = false;
+  if (1 == column.get_extended_type_info().count()) {
+    ObString info = column.get_extended_type_info().at(0);
+    ObString head = info.split_on('(').trim();
+    is_vector = (0 == head.compare("VECTOR"));
+  }
+  return is_vector;
+}
+} // anonymous namespace
+
+int ObUpdateResolver::add_ai_vector_invalidation_assignments()
+{
+  int ret = OB_SUCCESS;
+  ObUpdateStmt *stmt = NULL;
+  if (OB_ISNULL(stmt = get_update_stmt()) || OB_ISNULL(schema_checker_)
+      || OB_ISNULL(params_.expr_factory_) || OB_ISNULL(session_info_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    ObIArray<ObUpdateTableInfo *> &tables_info = stmt->get_update_table_info();
+    for (int64_t t = 0; OB_SUCC(ret) && t < tables_info.count(); ++t) {
+      const ObTableSchema *table_schema = NULL;
+      ObUpdateTableInfo *table_info = tables_info.at(t);
+      if (OB_ISNULL(table_info)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(schema_checker_->get_table_schema(table_info->ref_table_id_, table_schema))) {
+      } else if (OB_ISNULL(table_schema) || !table_schema->is_user_table()) {
+      } else {
+        const int64_t column_cnt = table_schema->get_column_count();
+        for (int64_t i = 0; OB_SUCC(ret) && i < column_cnt; ++i) {
+          const ObColumnSchemaV2 *column = table_schema->get_column_schema_by_idx(i);
+          ObString name;
+          if (OB_ISNULL(column)) {
+            ret = OB_ERR_UNEXPECTED;
+          } else if (FALSE_IT(name = column->get_column_name_str())) {
+          } else if (name.length() <= 11 || 0 != strncasecmp(name.ptr(), "__ai_state_", 11)) {
+          } else {
+            ObString result_name(name.length() - 11, name.ptr() + 11);
+            const ObColumnSchemaV2 *result_column = table_schema->get_column_schema(result_name);
+            char spec_name[OB_MAX_COLUMN_NAME_LENGTH];
+            int64_t spec_len = snprintf(spec_name, sizeof(spec_name), "__ai_result_spec_%.*s",
+                                        result_name.length(), result_name.ptr());
+            const ObColumnSchemaV2 *spec_column =
+                (OB_ISNULL(result_column) || !ai_vec_is_vector_column(*result_column))
+                    ? NULL
+                    : table_schema->get_column_schema(ObString(static_cast<int32_t>(spec_len), spec_name));
+            if (OB_ISNULL(result_column) || OB_ISNULL(spec_column)) {
+            } else {
+              ObString deps = spec_column->get_comment_str();
+              bool dep_assigned = false;
+              bool ai_assigned = false;
+              for (int64_t a = 0; OB_SUCC(ret) && a < table_info->assignments_.count(); ++a) {
+                const ObAssignment &assign = table_info->assignments_.at(a);
+                if (OB_ISNULL(assign.column_expr_)) {
+                  ret = OB_ERR_UNEXPECTED;
+                } else if (assign.column_expr_->get_column_id() == result_column->get_column_id()) {
+                  ai_assigned = true;
+                } else {
+                  ObString assigned_name = assign.column_expr_->get_column_name();
+                  int32_t start = 0;
+                  for (int32_t k = 0; !dep_assigned && k <= deps.length(); ++k) {
+                    if (k == deps.length() || ',' == deps.ptr()[k]) {
+                      int32_t begin = start;
+                      int32_t end = k;
+                      while (begin < end && ' ' == deps.ptr()[begin]) { ++begin; }
+                      while (end > begin && ' ' == deps.ptr()[end - 1]) { --end; }
+                      if (end > begin) {
+                        dep_assigned = (0 == assigned_name.case_compare(
+                                          ObString(end - begin, deps.ptr() + begin)));
+                      }
+                      start = k + 1;
+                    }
+                  }
+                }
+              }
+              if (OB_SUCC(ret) && dep_assigned && !ai_assigned) {
+                // the plan matches assignments by the column expr pointer, so the stmt's own
+                // column expr has to be reused instead of building a new one
+                ColumnItem *column_item = stmt->get_column_item(table_info->table_id_,
+                                                                result_column->get_column_id());
+                ObConstRawExpr *null_expr = NULL;
+                ObObj null_obj;
+                null_obj.set_null();
+                if (OB_ISNULL(column_item)) {
+                  LOG_INFO("ai vector invalidation skipped: no column item", "table_id",
+                           table_info->ref_table_id_, "column_id",
+                           result_column->get_column_id());
+                } else if (OB_FAIL(ObRawExprUtils::build_const_obj_expr(*params_.expr_factory_,
+                                                                        null_obj,
+                                                                        null_expr))) {
+                } else {
+                  ObAssignment assign;
+                  assign.column_expr_ = static_cast<ObColumnRefRawExpr *>(column_item->expr_);
+                  assign.expr_ = null_expr;
+                  assign.is_implicit_ = true;
+                  if (OB_FAIL(null_expr->formalize(session_info_))) {
+                  } else if (OB_FAIL(table_info->assignments_.push_back(assign))) {
+                  } else {
+                    LOG_INFO("ai vector invalidation assignment added", "table_id",
+                             table_info->ref_table_id_, "column_id",
+                             result_column->get_column_id(), "total",
+                             table_info->assignments_.count());
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
   return ret;
 }

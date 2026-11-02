@@ -807,6 +807,10 @@ int ObCreateTableResolver::resolve_ai_column(share::schema::ObColumnSchemaV2 &re
       } else {
         hidden_col.set_data_type(ObLongTextType);
         hidden_col.set_collation_type(CS_TYPE_UTF8MB4_BIN);
+        if (2 == i && !def.dependency_columns_.empty()) {
+          if (OB_FAIL(hidden_col.set_comment(def.dependency_columns_))) {
+          }
+        }
       }
       hidden_col.set_is_hidden(true);
       if (OB_FAIL(resolved_cols.push_back(hidden_col))) {
