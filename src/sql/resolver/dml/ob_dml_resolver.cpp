@@ -2887,6 +2887,55 @@ static int file_sql_read_jsonl(const ObString &content, ObIAllocator &alloc,
   return ret;
 }
 
+
+// Type name inference for "describe <select over a file table>" (DuckDB style names).
+static int file_sql_describe_type(const ObIArray<ObString> &values, ObString &type_name)
+{
+  int ret = OB_SUCCESS;
+  bool all_int = true;
+  bool all_number = true;
+  bool any_dot = false;
+  bool all_bool = true;
+  bool all_date = true;
+  bool all_datetime = true;
+  bool any_value = false;
+  for (int64_t i = 0; i < values.count(); ++i) {
+    const ObString v = values.at(i);
+    if (v.empty()) {
+      continue;
+    }
+    any_value = true;
+    if (all_int && !file_sql_is_int(v)) { all_int = false; }
+    if (all_number && !file_sql_is_int(v) && !file_sql_is_double(v)) { all_number = false; }
+    if (!any_dot && NULL != v.find('.')) { any_dot = true; }
+    if (all_bool && 0 != v.case_compare("true") && 0 != v.case_compare("false")) { all_bool = false; }
+    // date: YYYY-MM-DD, datetime: YYYY-MM-DD[ T]HH:MM:SS
+    bool is_date = (v.length() >= 10 && '-' == v.ptr()[4] && '-' == v.ptr()[7]);
+    for (int32_t k = 0; is_date && k < 10; ++k) {
+      if (4 == k || 7 == k) { continue; }
+      is_date = (v.ptr()[k] >= '0' && v.ptr()[k] <= '9');
+    }
+    bool is_datetime = is_date && v.length() >= 19 && ((' ' == v.ptr()[10]) || ('T' == v.ptr()[10]))
+                       && ':' == v.ptr()[13] && ':' == v.ptr()[16];
+    if (all_date && !(is_date && 10 == v.length())) { all_date = false; }
+    if (all_datetime && !is_datetime) { all_datetime = false; }
+  }
+  const char *name = "VARCHAR";
+  if (any_value && all_datetime) {
+    name = "DATETIME";
+  } else if (any_value && all_date) {
+    name = "DATE";
+  } else if (any_value && all_number && any_dot) {
+    name = "DOUBLE";
+  } else if (any_value && all_int) {
+    name = "BIGINT";
+  } else if (any_value && all_bool) {
+    name = "BOOLEAN";
+  }
+  type_name = ObString::make_string(name);
+  return ret;
+}
+
 int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem *&table_item)
 {
   int ret = OB_SUCCESS;
@@ -3045,6 +3094,112 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
             if (OB_FAIL(file_sql_split_csv_line(records.at(r), file_alloc, *cells))) {
             } else if (cells->count() != header.count()) {
               ret = OB_INVALID_ARGUMENT;
+            } else if (OB_FAIL(rows.push_back(cells))) {
+            }
+          }
+        }
+      } else if (0 == func_name.case_compare("__file_describe")) {
+        // "describe <select over a file table>" rewrite target: answer with the inferred schema
+        ObSEArray<ObString, 32> lines;
+        int64_t rec_start = 0;
+        bool in_quote = false;
+        for (int64_t i = 0; OB_SUCC(ret) && i <= content.length(); ++i) {
+          const char c = (i < content.length()) ? content.ptr()[i] : '\n';
+          if ('"' == c) {
+            in_quote = !in_quote;
+          }
+          if ('\n' == c && !in_quote) {
+            int64_t end = i;
+            if (end > rec_start && '\r' == content.ptr()[end - 1]) {
+              --end;
+            }
+            if (end > rec_start) {
+              ObString line;
+              if (OB_FAIL(ob_write_string(file_alloc, ObString(end - rec_start, content.ptr() + rec_start), line))) {
+              } else if (OB_FAIL(lines.push_back(line))) {
+              }
+            }
+            rec_start = i + 1;
+          }
+        }
+        ObSEArray<ObString, 16> cols;
+        if (OB_SUCC(ret)) {
+          if (lines.count() < 1) {
+            ret = OB_INVALID_ARGUMENT;
+          } else if (OB_FAIL(file_sql_split_csv_line(lines.at(0), file_alloc, cols))) {
+          }
+        }
+        // data cells per column
+        ObSEArray<ObSQLSessionInfo *, 1> unused_sessions;
+        UNUSED(unused_sessions);
+        ObSEArray<ObString, 32> names;
+        ObSEArray<ObString, 16> type_names;
+        ObSEArray<bool, 16> nullables;
+        for (int64_t c = 0; OB_SUCC(ret) && c < cols.count(); ++c) {
+          ObSEArray<ObString, 32> column_values;
+          bool nullable = false;
+          for (int64_t r = 1; OB_SUCC(ret) && r < lines.count(); ++r) {
+            ObSEArray<ObString, 16> cells;
+            if (OB_FAIL(file_sql_split_csv_line(lines.at(r), file_alloc, cells))) {
+            } else if (c < cells.count()) {
+              if (cells.at(c).trim().empty()) {
+                nullable = true;
+              }
+              if (OB_FAIL(column_values.push_back(cells.at(c).trim()))) {
+              }
+            }
+          }
+          if (OB_SUCC(ret)) {
+            ObString type_name;
+            if (OB_FAIL(file_sql_describe_type(column_values, type_name))) {
+            } else if (OB_FAIL(type_names.push_back(type_name))) {
+            } else if (OB_FAIL(nullables.push_back(nullable))) {
+            }
+          }
+        }
+        // duplicate names get a __N suffix, the same way the data path renames columns
+        for (int64_t c = 0; OB_SUCC(ret) && c < cols.count(); ++c) {
+          ObString name = cols.at(c).trim();
+          int64_t dup = 1;
+          bool conflict = true;
+          while (OB_SUCC(ret) && conflict && dup < 100) {
+            conflict = false;
+            for (int64_t k = 0; !conflict && k < names.count(); ++k) {
+              conflict = (0 == names.at(k).case_compare(name));
+            }
+            if (conflict) {
+              ObSqlString renamed;
+              if (OB_FAIL(renamed.append_fmt("%.*s__%ld", name.length(), name.ptr(), ++dup))) {
+              } else if (OB_FAIL(ob_write_string(file_alloc, renamed.string(), name))) {
+              }
+            }
+          }
+          if (OB_SUCC(ret) && OB_FAIL(names.push_back(name))) {
+          }
+        }
+        if (OB_SUCC(ret)) {
+          if (OB_FAIL(header.push_back(ObString("column_name")))) {
+          } else if (OB_FAIL(header.push_back(ObString("column_type")))) {
+          } else if (OB_FAIL(header.push_back(ObString("null")))) {
+          } else if (OB_FAIL(header.push_back(ObString("key")))) {
+          } else if (OB_FAIL(header.push_back(ObString("default")))) {
+          } else if (OB_FAIL(header.push_back(ObString("extra")))) {
+          }
+        }
+        for (int64_t c = 0; OB_SUCC(ret) && c < names.count(); ++c) {
+          void *mem = file_alloc.alloc(sizeof(ObSEArray<ObString, 16>));
+          ObSEArray<ObString, 16> *cells = NULL;
+          if (OB_ISNULL(mem)) {
+            ret = OB_ALLOCATE_MEMORY_FAILED;
+          } else {
+            cells = new (mem) ObSEArray<ObString, 16>();
+            if (OB_FAIL(cells->push_back(names.at(c)))) {
+            } else if (OB_FAIL(cells->push_back(type_names.at(c)))) {
+            } else if (OB_FAIL(cells->push_back(nullables.at(c) ? ObString("YES")
+                                                                 : ObString("NO")))) {
+            } else if (OB_FAIL(cells->push_back(ObString()))) {
+            } else if (OB_FAIL(cells->push_back(ObString()))) {
+            } else if (OB_FAIL(cells->push_back(ObString()))) {
             } else if (OB_FAIL(rows.push_back(cells))) {
             }
           }

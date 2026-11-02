@@ -12299,7 +12299,29 @@ explain_or_desc relation_factor opt_desc_column_option
   malloc_non_terminal_node($$, result->malloc_pool_, T_SHOW_COLUMNS, 4, $$, $2, NULL, $3);
 }
 
-| explain_or_desc explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);}
+| explain_or_desc explainable_stmt
+{
+  ParseNode *from_list = NULL;
+  ParseNode *alias_node = NULL;
+  ParseNode *table_node = NULL;
+  if (NULL != $1 && 1 == $1->value_ && NULL != $2 && T_SELECT == $2->type_
+      && NULL != $2->children_ && NULL != (from_list = $2->children_[PARSE_SELECT_FROM])
+      && T_FROM_LIST == from_list->type_ && 1 == from_list->num_child_
+      && NULL != from_list->children_ && NULL != (alias_node = from_list->children_[0])
+      && NULL != (table_node = (T_ALIAS == alias_node->type_ && 2 == alias_node->num_child_
+                                    ? alias_node->children_[0] : alias_node))
+      && T_FILE_SQL_TABLE == table_node->type_ && 2 == table_node->num_child_) {
+    /* describe <select over a file table>: describe the file schema instead of the plan */
+    ParseNode *describe_node = NULL;
+    ParseNode *name_node = NULL;
+    make_name_node(name_node, result->malloc_pool_, "__file_describe");
+    malloc_non_terminal_node(describe_node, result->malloc_pool_, T_FILE_SQL_TABLE, 2,
+                             name_node, table_node->children_[1]);
+    malloc_select_values_stmt($$, result, describe_node, NULL, NULL, NULL, NULL);
+  } else {
+    GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);
+  }
+}
 | explain_or_desc PRETTY explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY, $3, NULL, NULL);}
 | explain_or_desc PRETTY_COLOR explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY_COLOR, $3, NULL, NULL);}
 
@@ -12340,7 +12362,12 @@ explain_or_desc relation_factor opt_desc_column_option
 
 explain_or_desc:
 EXPLAIN {$$ = NULL;}
-| DESCRIBE {$$ = NULL;}
+| DESCRIBE
+{
+  /* mark DESCRIBE so that "describe <select over a file table>" can be rewritten */
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 1;
+}
 | DESC  {$$ = NULL;}
 ;
 
