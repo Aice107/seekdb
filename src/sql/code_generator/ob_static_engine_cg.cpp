@@ -5480,6 +5480,9 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       } else {
         // the column name written as the header line of the output file
         ObString name = select_expr->get_alias_column_name();
+        if (name.empty() && select_expr->is_column_ref_expr()) {
+          name = static_cast<const ObColumnRefRawExpr *>(select_expr)->get_column_name();
+        }
         ObString name_copy;
         if (OB_FAIL(ob_write_string(alloc, name, name_copy))) {
         } else if (OB_FAIL(spec.header_names_.push_back(name_copy))) {

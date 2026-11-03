@@ -234,6 +234,32 @@ int ObSelectIntoOp::inner_get_next_row()
   return ret;
 }
 
+int ObSelectIntoOp::write_header_line(ObExternalFileWriter *data_writer)
+{
+  int ret = OB_SUCCESS;
+  ObCsvFileWriter *csv_data_writer = NULL;
+  if (OB_UNLIKELY(!MY_SPEC.header_ || header_done_)) {
+    // nothing to do
+  } else if (OB_ISNULL(csv_data_writer = static_cast<ObCsvFileWriter *>(data_writer))) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.header_names_.count(); ++i) {
+      ObObj name_obj;
+      name_obj.set_varchar(MY_SPEC.header_names_.at(i));
+      name_obj.set_collation_type(ObCharset::get_default_collation(ObCharset::get_default_charset()));
+      OZ(print_field(name_obj, *csv_data_writer));
+      if (OB_SUCC(ret) && i != MY_SPEC.header_names_.count() - 1) {
+        OZ(write_obj_to_file(field_str_, *csv_data_writer));
+      }
+    }
+    if (OB_SUCC(ret)) {
+      OZ(write_obj_to_file(line_str_, *csv_data_writer));
+      header_done_ = true;
+    }
+  }
+  return ret;
+}
+
 int ObSelectIntoOp::inner_get_next_batch(const int64_t max_row_cnt)
 {
   int ret = OB_SUCCESS;
@@ -274,7 +300,8 @@ int ObSelectIntoOp::inner_get_next_batch(const int64_t max_row_cnt)
         row_count += brs_.size_ - brs_.skip_->accumulate_bit_cnt(brs_.size_);
         if (T_INTO_OUTFILE == into_type) {
           if (ObExternalFileFormat::FormatType::CSV_FORMAT == format_type_) {
-            if (OB_FAIL(into_outfile_batch_csv(brs_, data_writer))) {
+            if (OB_FAIL(write_header_line(data_writer))) {
+            } else if (OB_FAIL(into_outfile_batch_csv(brs_, data_writer))) {
             }
           } else {
             ret = OB_NOT_SUPPORTED;
@@ -954,7 +981,6 @@ int ObSelectIntoOp::into_outfile(ObExternalFileWriter *data_writer)
     ret = OB_ERR_UNEXPECTED;
   }
   // write the header line once per file when the statement asked for it
-  LOG_INFO("ai copy header probe", "header", MY_SPEC.header_, "names", MY_SPEC.header_names_.count());
   if (OB_SUCC(ret) && MY_SPEC.header_ && !header_done_) {
     for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.header_names_.count(); ++i) {
       if (i >= select_exprs.count()) {
