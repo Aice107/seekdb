@@ -16726,8 +16726,15 @@ COPY '(' select_stmt ')' TO STRING_VALUE opt_copy_with_options
   make_name_node(csv_name, result->malloc_pool_, "csv");
   malloc_non_terminal_node(type_node, result->malloc_pool_, T_EXTERNAL_FILE_FORMAT_TYPE, 1, csv_name);
   malloc_terminal_node(header_node, result->malloc_pool_, T_HEADER);
-  merge_nodes(format_list, result, T_EXTERNAL_FILE_FORMAT, type_node);
-  merge_nodes(format_list, result, T_EXTERNAL_FILE_FORMAT, header_node);
+  ParseNode *comma_node = NULL;
+  ParseNode *field_node = NULL;
+  malloc_terminal_node(comma_node, result->malloc_pool_, T_VARCHAR);
+  comma_node->str_value_ = parse_strndup(",", 1, result->malloc_pool_);
+  comma_node->str_len_ = 1;
+  malloc_non_terminal_node(field_node, result->malloc_pool_, T_FIELD_TERMINATED_STR, 1, comma_node);
+  dup_expr_string(field_node, result, 1, 1);
+  malloc_non_terminal_node(format_list, result->malloc_pool_, T_EXTERNAL_FILE_FORMAT, 3,
+                           type_node, header_node, field_node);
   malloc_non_terminal_node(into_node, result->malloc_pool_, T_INTO_OUTFILE, 3, $6, format_list, NULL);
   $$ = $3;
   if (NULL != $$ && NULL != $$->children_) {
@@ -16771,6 +16778,10 @@ NAME_OB
   $$ = $2;
 }
 | FORMAT STRING_VALUE
+{
+  $$ = $2;
+}
+| FORMAT NAME_OB
 {
   $$ = $2;
 }

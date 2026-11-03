@@ -954,6 +954,7 @@ int ObSelectIntoOp::into_outfile(ObExternalFileWriter *data_writer)
     ret = OB_ERR_UNEXPECTED;
   }
   // write the header line once per file when the statement asked for it
+  LOG_INFO("ai copy header probe", "header", MY_SPEC.header_, "names", MY_SPEC.header_names_.count());
   if (OB_SUCC(ret) && MY_SPEC.header_ && !header_done_) {
     for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.header_names_.count(); ++i) {
       if (i >= select_exprs.count()) {
