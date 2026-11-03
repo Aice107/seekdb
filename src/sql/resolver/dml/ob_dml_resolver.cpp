@@ -3555,6 +3555,16 @@ int ObDMLResolver::resolve_file_sql_item(const ParseNode &table_node, TableItem 
     } else {
       ObString path(static_cast<int32_t>(table_node.children_[1]->str_len_),
                     table_node.children_[1]->str_value_);
+      // security: a non empty "secure_file_priv" that is not "/" restricts the visible paths
+      ObString secure_priv;
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(session_info_->get_sys_variable(share::SYS_VAR_SECURE_FILE_PRIV, secure_priv))) {
+      } else if (!secure_priv.empty() && 0 != secure_priv.compare("/")
+                 && (path.length() < secure_priv.length()
+                     || 0 != MEMCMP(path.ptr(), secure_priv.ptr(), secure_priv.length()))) {
+        ret = OB_NOT_SUPPORTED;
+        LOG_USER_ERROR(OB_NOT_SUPPORTED, "file path outside of secure_file_priv");
+      }
       if (0 == func_name.case_compare("glob")) {
         glob_t matches;
         int glob_ret = OB_SUCCESS;
