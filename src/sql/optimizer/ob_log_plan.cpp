@@ -6830,7 +6830,22 @@ int ObLogPlan::allocate_select_into_as_top(ObLogicalOperator *&old_top)
       select_into->set_escaped_cht(into_item->escaped_cht_);
       select_into->set_cs_type(into_item->cs_type_);
       select_into->set_header(into_item->header_);
-      LOG_ERROR("copy header propagate probe", "header", into_item->header_);
+      // the column names written as the header line of the output file
+      if (OB_SUCC(ret) && into_item->header_) {
+        const ObIArray<SelectItem> &select_items = stmt->get_select_items();
+        ObIArray<ObString> &names = select_into->get_header_names();
+        for (int64_t i = 0; OB_SUCC(ret) && i < select_items.count(); ++i) {
+          ObString name = select_items.at(i).alias_name_;
+          if (name.empty()) {
+            name = select_items.at(i).expr_name_;
+          }
+          ObString name_copy;
+          if (OB_FAIL(ob_write_string(select_into->get_plan()->get_allocator(),
+                                      name, name_copy))) {
+          } else if (OB_FAIL(names.push_back(name_copy))) {
+          }
+        }
+      }
       select_into->set_external_properties(into_item->external_properties_);
       select_into->set_child(ObLogicalOperator::first_child, old_top);
       // compute property

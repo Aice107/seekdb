@@ -3028,7 +3028,6 @@ int ObSelectResolver::resolve_into_outfile_with_format(const ParseNode *node, Ob
       if (OB_ISNULL(option_node = format_node->children_[i])) {
         ret = OB_ERR_UNEXPECTED;
       } else if (T_HEADER == option_node->type_) {
-        LOG_ERROR("copy option probe", "header_seen", true);
         into_item.header_ = true;
       } else if (T_EXTERNAL_FILE_FORMAT_TYPE == option_node->type_
                  || T_CHARSET == option_node->type_) {

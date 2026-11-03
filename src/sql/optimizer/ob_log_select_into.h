@@ -45,11 +45,13 @@ public:
         cs_type_(CS_TYPE_INVALID),
         is_overwrite_(false),
         header_(false),
+
         external_properties_()
   {
   }
   virtual ~ObLogSelectInto() {}
   inline void set_header(bool header) { header_ = header; }
+  inline common::ObIArray<common::ObString> &get_header_names() { return header_names_; }
   inline bool get_header() const { return header_; }
   inline void set_into_type(ObItemType &into_type)
   {
@@ -191,6 +193,7 @@ private:
   common::ObCollationType cs_type_;
   bool is_overwrite_;
   bool header_;
+  common::ObSEArray<common::ObString, 8> header_names_;
   common::ObString external_properties_;
 };
 }
