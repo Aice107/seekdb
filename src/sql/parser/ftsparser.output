@@ -1,0 +1,300 @@
+终端机在文法中未使用
+
+   FTS_OPER
+   FTS_NUMB
+
+
+语法
+
+    0 $accept: query $end
+
+    1 query: expr_lst
+
+    2 expr_lst: /* empty */
+    3         | expr_lst expr
+    4         | expr_lst sub_expr
+
+    5 sub_expr: '(' expr_lst ')'
+    6         | prefix '(' expr_lst ')'
+
+    7 expr: term
+    8     | prefix term
+
+    9 prefix: '-'
+   10       | '+'
+   11       | '~'
+   12       | '<'
+   13       | '>'
+   14       | '@'
+   15       | '*'
+   16       | '%'
+
+   17 term: FTS_TERM
+
+
+终结语词，附有它们出现处的规则
+
+$end (0) 0
+'%' (37) 16
+'(' (40) 5 6
+')' (41) 5 6
+'*' (42) 15
+'+' (43) 10
+'-' (45) 9
+'<' (60) 12
+'>' (62) 13
+'@' (64) 14
+'~' (126) 11
+error (256)
+FTS_OPER (258)
+FTS_TERM (259) 17
+FTS_NUMB (260)
+
+
+非终结语词，附有它们出现处的规则
+
+$accept (16)
+    on left: 0
+query (17)
+    on left: 1, on right: 0
+expr_lst (18)
+    on left: 2 3 4, on right: 1 3 4 5 6
+sub_expr (19)
+    on left: 5 6, on right: 4
+expr (20)
+    on left: 7 8, on right: 3
+prefix (21)
+    on left: 9 10 11 12 13 14 15 16, on right: 6 8
+term (22)
+    on left: 17, on right: 7 8
+
+
+state 0
+
+    0 $accept: . query $end
+
+    $default  使用规则 2 以归约 (expr_lst)
+
+    query     转到状态 1
+    expr_lst  转到状态 2
+
+
+state 1
+
+    0 $accept: query . $end
+
+    $end  偏移，并进入状态 3
+
+
+state 2
+
+    1 query: expr_lst .
+    3 expr_lst: expr_lst . expr
+    4         | expr_lst . sub_expr
+
+    FTS_TERM  偏移，并进入状态 4
+    '+'       偏移，并进入状态 5
+    '-'       偏移，并进入状态 6
+    '~'       偏移，并进入状态 7
+    '<'       偏移，并进入状态 8
+    '>'       偏移，并进入状态 9
+    '('       偏移，并进入状态 10
+    '@'       偏移，并进入状态 11
+    '*'       偏移，并进入状态 12
+    '%'       偏移，并进入状态 13
+
+    $default  使用规则 1 以归约 (query)
+
+    sub_expr  转到状态 14
+    expr      转到状态 15
+    prefix    转到状态 16
+    term      转到状态 17
+
+
+state 3
+
+    0 $accept: query $end .
+
+    $default  接受
+
+
+state 4
+
+   17 term: FTS_TERM .
+
+    $default  使用规则 17 以归约 (term)
+
+
+state 5
+
+   10 prefix: '+' .
+
+    $default  使用规则 10 以归约 (prefix)
+
+
+state 6
+
+    9 prefix: '-' .
+
+    $default  使用规则 9 以归约 (prefix)
+
+
+state 7
+
+   11 prefix: '~' .
+
+    $default  使用规则 11 以归约 (prefix)
+
+
+state 8
+
+   12 prefix: '<' .
+
+    $default  使用规则 12 以归约 (prefix)
+
+
+state 9
+
+   13 prefix: '>' .
+
+    $default  使用规则 13 以归约 (prefix)
+
+
+state 10
+
+    5 sub_expr: '(' . expr_lst ')'
+
+    $default  使用规则 2 以归约 (expr_lst)
+
+    expr_lst  转到状态 18
+
+
+state 11
+
+   14 prefix: '@' .
+
+    $default  使用规则 14 以归约 (prefix)
+
+
+state 12
+
+   15 prefix: '*' .
+
+    $default  使用规则 15 以归约 (prefix)
+
+
+state 13
+
+   16 prefix: '%' .
+
+    $default  使用规则 16 以归约 (prefix)
+
+
+state 14
+
+    4 expr_lst: expr_lst sub_expr .
+
+    $default  使用规则 4 以归约 (expr_lst)
+
+
+state 15
+
+    3 expr_lst: expr_lst expr .
+
+    $default  使用规则 3 以归约 (expr_lst)
+
+
+state 16
+
+    6 sub_expr: prefix . '(' expr_lst ')'
+    8 expr: prefix . term
+
+    FTS_TERM  偏移，并进入状态 4
+    '('       偏移，并进入状态 19
+
+    term  转到状态 20
+
+
+state 17
+
+    7 expr: term .
+
+    $default  使用规则 7 以归约 (expr)
+
+
+state 18
+
+    3 expr_lst: expr_lst . expr
+    4         | expr_lst . sub_expr
+    5 sub_expr: '(' expr_lst . ')'
+
+    FTS_TERM  偏移，并进入状态 4
+    '+'       偏移，并进入状态 5
+    '-'       偏移，并进入状态 6
+    '~'       偏移，并进入状态 7
+    '<'       偏移，并进入状态 8
+    '>'       偏移，并进入状态 9
+    '('       偏移，并进入状态 10
+    ')'       偏移，并进入状态 21
+    '@'       偏移，并进入状态 11
+    '*'       偏移，并进入状态 12
+    '%'       偏移，并进入状态 13
+
+    sub_expr  转到状态 14
+    expr      转到状态 15
+    prefix    转到状态 16
+    term      转到状态 17
+
+
+state 19
+
+    6 sub_expr: prefix '(' . expr_lst ')'
+
+    $default  使用规则 2 以归约 (expr_lst)
+
+    expr_lst  转到状态 22
+
+
+state 20
+
+    8 expr: prefix term .
+
+    $default  使用规则 8 以归约 (expr)
+
+
+state 21
+
+    5 sub_expr: '(' expr_lst ')' .
+
+    $default  使用规则 5 以归约 (sub_expr)
+
+
+state 22
+
+    3 expr_lst: expr_lst . expr
+    4         | expr_lst . sub_expr
+    6 sub_expr: prefix '(' expr_lst . ')'
+
+    FTS_TERM  偏移，并进入状态 4
+    '+'       偏移，并进入状态 5
+    '-'       偏移，并进入状态 6
+    '~'       偏移，并进入状态 7
+    '<'       偏移，并进入状态 8
+    '>'       偏移，并进入状态 9
+    '('       偏移，并进入状态 10
+    ')'       偏移，并进入状态 23
+    '@'       偏移，并进入状态 11
+    '*'       偏移，并进入状态 12
+    '%'       偏移，并进入状态 13
+
+    sub_expr  转到状态 14
+    expr      转到状态 15
+    prefix    转到状态 16
+    term      转到状态 17
+
+
+state 23
+
+    6 sub_expr: prefix '(' expr_lst ')' .
+
+    $default  使用规则 6 以归约 (sub_expr)

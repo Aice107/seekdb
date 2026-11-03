@@ -497,7 +497,7 @@ END_P SET_VAR DELIMITER
 %type <node> dynamic_sampling_hint
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters opt_ai_column_with
-%type <node> json_table_expr unnest_expr file_sql_expr file_sql_arg mock_jt_on_error_on_empty jt_column_list json_table_column_def
+%type <node> json_table_expr unnest_expr file_sql_expr file_sql_arg mock_jt_on_error_on_empty jt_column_list json_table_column_def copy_to_stmt opt_copy_with_options copy_option_list copy_option
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
 %type <node> table_values_clause table_values_clause_with_order_by_and_limit values_row_list row_value
@@ -556,6 +556,7 @@ opt_end_p:
 /* only preparable statement will set question mark size */
 stmt:
     select_stmt             { $$ = $1; question_mark_issue($$, result); }
+  | copy_to_stmt            { $$ = $1; question_mark_issue($$, result); }
   | insert_stmt             { $$ = $1; question_mark_issue($$, result); }
   | create_table_stmt       {
     $$ = $1;
@@ -16710,6 +16711,74 @@ DAY
 *
 *  JSON TABLE
 *============================================================*/
+
+// COPY (query) TO 'file' (format csv, header, nullstr 'NULL')
+// Rewritten into "SELECT * FROM (query) INTO OUTFILE 'file' FORMAT (TYPE='csv', HEADER)".
+copy_to_stmt:
+COPY '(' select_stmt ')' TO STRING_VALUE opt_copy_with_options
+{
+  (void)($7);
+  ParseNode *format_list = NULL;
+  ParseNode *type_node = NULL;
+  ParseNode *header_node = NULL;
+  ParseNode *into_node = NULL;
+  ParseNode *csv_name = NULL;
+  make_name_node(csv_name, result->malloc_pool_, "csv");
+  malloc_non_terminal_node(type_node, result->malloc_pool_, T_EXTERNAL_FILE_FORMAT_TYPE, 1, csv_name);
+  malloc_terminal_node(header_node, result->malloc_pool_, T_HEADER);
+  merge_nodes(format_list, result, T_EXTERNAL_FILE_FORMAT, type_node);
+  merge_nodes(format_list, result, T_EXTERNAL_FILE_FORMAT, header_node);
+  malloc_non_terminal_node(into_node, result->malloc_pool_, T_INTO_OUTFILE, 3, $6, format_list, NULL);
+  $$ = $3;
+  if (NULL != $$ && NULL != $$->children_) {
+    $$->children_[PARSE_SELECT_INTO] = into_node;
+  }
+}
+;
+
+opt_copy_with_options:
+/* empty */
+{
+  $$ = NULL;
+}
+| '(' copy_option_list ')'
+{
+  $$ = $2;
+}
+;
+
+copy_option_list:
+copy_option
+{
+  $$ = $1;
+}
+| copy_option_list ',' copy_option
+{
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, $3);
+}
+;
+
+copy_option:
+NAME_OB
+{
+  (void)($1);
+  malloc_terminal_node($$, result->malloc_pool_, T_INT);
+  $$->value_ = 0;
+}
+| NAME_OB STRING_VALUE
+{
+  (void)($1);
+  $$ = $2;
+}
+| FORMAT STRING_VALUE
+{
+  $$ = $2;
+}
+| STRING_VALUE
+{
+  $$ = $1;
+}
+;
 
 file_sql_expr:
 NAME_OB '(' STRING_VALUE ')'

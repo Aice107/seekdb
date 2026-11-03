@@ -3027,6 +3027,8 @@ int ObSelectResolver::resolve_into_outfile_with_format(const ParseNode *node, Ob
     for (int i = 0; OB_SUCC(ret) && i < format_node->num_child_; ++i) {
       if (OB_ISNULL(option_node = format_node->children_[i])) {
         ret = OB_ERR_UNEXPECTED;
+      } else if (T_HEADER == option_node->type_) {
+        into_item.header_ = true;
       } else if (T_EXTERNAL_FILE_FORMAT_TYPE == option_node->type_
                  || T_CHARSET == option_node->type_) {
       } else if (OB_FAIL(ObResolverUtils::resolve_file_format(option_node, external_format, params_))) {

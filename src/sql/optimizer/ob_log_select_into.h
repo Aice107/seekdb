@@ -44,10 +44,13 @@ public:
         escaped_cht_(),
         cs_type_(CS_TYPE_INVALID),
         is_overwrite_(false),
+        header_(false),
         external_properties_()
   {
   }
   virtual ~ObLogSelectInto() {}
+  inline void set_header(bool header) { header_ = header; }
+  inline bool get_header() const { return header_; }
   inline void set_into_type(ObItemType &into_type)
   {
     into_type_ = into_type;
@@ -187,6 +190,7 @@ private:
   common::ObObj escaped_cht_;
   common::ObCollationType cs_type_;
   bool is_overwrite_;
+  bool header_;
   common::ObString external_properties_;
 };
 }

@@ -71,6 +71,8 @@ public:
       parallel_(1),
       buffer_size_(DEFAULT_BUFFER_SIZE),
       is_overwrite_(false),
+      header_(false),
+      header_names_(alloc),
       external_properties_(alloc)
   {
   }
@@ -90,6 +92,8 @@ public:
   int64_t parallel_;
   int64_t buffer_size_;
   bool is_overwrite_;
+  bool header_;
+  common::ObFixedArray<common::ObString, common::ObIAllocator> header_names_;
   ObExternalFileFormat::StringData external_properties_;
   static const int64_t DEFAULT_MAX_FILE_SIZE = 256LL * 1024 * 1024;
   static const int64_t DEFAULT_BUFFER_SIZE = 1LL * 1024 * 1024;
@@ -102,6 +106,7 @@ public:
     : ObOperator(exec_ctx, spec, input),
       top_limit_cnt_(INT64_MAX),
       is_first_(true),
+      header_done_(false),
       field_str_(),
       line_str_(),
       cs_type_(CS_TYPE_INVALID),
@@ -266,6 +271,7 @@ private:
 private:
   int64_t top_limit_cnt_;
   bool is_first_;
+  bool header_done_;
   ObObj field_str_;
   ObObj line_str_;
   ObObj file_name_;

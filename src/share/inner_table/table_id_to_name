@@ -1,0 +1,586 @@
+########## Table ID to Table Name mapping ##########
+# For easy analysis of occupancy, the same ID may map to multiple Names
+
+# 1: __all_core_table
+# 3: __all_table
+# 4: __all_column
+# 5: __all_ddl_operation
+# 12: __all_table_history
+# 12: __all_table  # BASE_TABLE_NAME
+# 13: __all_column_history
+# 13: __all_column  # BASE_TABLE_NAME
+# 100: __all_part
+# 101: __all_part_history
+# 101: __all_part  # BASE_TABLE_NAME
+# 102: __all_sub_part
+# 103: __all_sub_part_history
+# 103: __all_sub_part  # BASE_TABLE_NAME
+# 104: __all_part_info
+# 105: __all_part_info_history
+# 105: __all_part_info  # BASE_TABLE_NAME
+# 106: __all_def_sub_part
+# 107: __all_def_sub_part_history
+# 107: __all_def_sub_part  # BASE_TABLE_NAME
+# 108: __all_sys_variable_history
+# 109: __all_foreign_key
+# 110: __all_foreign_key_history
+# 110: __all_foreign_key  # BASE_TABLE_NAME
+# 111: __all_constraint
+# 112: __all_constraint_history
+# 112: __all_constraint  # BASE_TABLE_NAME
+# 113: __all_trigger
+# 114: __all_trigger_history
+# 114: __all_trigger  # BASE_TABLE_NAME
+# 115: __all_table_stat
+# 116: __all_column_stat
+# 117: __all_histogram_stat
+# 118: __all_column_stat_history
+# 119: __all_histogram_stat_history
+# 120: __all_aux_stat
+# 1000: __all_user
+# 1001: __all_user_history
+# 1001: __all_user  # BASE_TABLE_NAME
+# 1002: __all_database
+# 1003: __all_database_history
+# 1003: __all_database  # BASE_TABLE_NAME
+# 1006: __all_table_privilege
+# 1007: __all_table_privilege_history
+# 1007: __all_table_privilege  # BASE_TABLE_NAME
+# 1008: __all_database_privilege
+# 1009: __all_database_privilege_history
+# 1009: __all_database_privilege  # BASE_TABLE_NAME
+# 1010: __all_sys_variable
+# 1011: __all_sys_stat
+# 1018: __all_outline
+# 1019: __all_outline_history
+# 1019: __all_outline  # BASE_TABLE_NAME
+# 1020: __all_recyclebin
+# 1022: __all_foreign_key_column
+# 1023: __all_foreign_key_column_history
+# 1023: __all_foreign_key_column  # BASE_TABLE_NAME
+# 1024: __all_auto_increment
+# 1025: __all_ddl_checksum
+# 1026: __all_routine
+# 1027: __all_routine_history
+# 1027: __all_routine  # BASE_TABLE_NAME
+# 1028: __all_routine_param
+# 1029: __all_routine_param_history
+# 1029: __all_routine_param  # BASE_TABLE_NAME
+# 1030: __all_package
+# 1031: __all_package_history
+# 1031: __all_package  # BASE_TABLE_NAME
+# 1032: __all_acquired_snapshot
+# 1033: __all_ori_schema_version
+# 1040: __all_role_grantee_map
+# 1041: __all_role_grantee_map_history
+# 1041: __all_role_grantee_map  # BASE_TABLE_NAME
+# 1043: __all_sysauth
+# 1044: __all_sysauth_history
+# 1044: __all_sysauth  # BASE_TABLE_NAME
+# 1045: __all_objauth
+# 1046: __all_objauth_history
+# 1046: __all_objauth  # BASE_TABLE_NAME
+# 1047: __all_error
+# 1049: __all_time_zone_name
+# 1050: __all_time_zone_transition
+# 1051: __all_time_zone_transition_type
+# 1052: __all_constraint_column
+# 1053: __all_constraint_column_history
+# 1053: __all_constraint_column  # BASE_TABLE_NAME
+# 1054: __all_dependency
+# 1058: __all_ddl_error_message
+# 1060: __all_ddl_task_status
+# 1061: __all_column_usage
+# 1062: __all_job
+# 1066: __all_monitor_modified
+# 1067: __all_table_stat_history
+# 1068: __all_optstat_global_prefs
+# 1069: __all_optstat_user_prefs
+# 1070: __all_tablet_to_table
+# 1071: __all_tablet_to_table_history
+# 1072: __all_tablet_checksum
+# 1074: __all_scheduler_job
+# 1076: __all_scheduler_program
+# 1077: __all_scheduler_program_argument
+# 1080: __all_freeze_info
+# 1081: __all_mock_fk_parent_table
+# 1082: __all_mock_fk_parent_table_history
+# 1082: __all_mock_fk_parent_table  # BASE_TABLE_NAME
+# 1083: __all_mock_fk_parent_table_column
+# 1084: __all_mock_fk_parent_table_column_history
+# 1084: __all_mock_fk_parent_table_column  # BASE_TABLE_NAME
+# 1085: __all_spatial_reference_systems
+# 1098: __all_dbms_lock_allocated
+# 1099: __all_scheduler_job_class
+# 1101: __all_routine_privilege
+# 1102: __all_routine_privilege_history
+# 1102: __all_routine_privilege  # BASE_TABLE_NAME
+# 1107: __all_column_privilege
+# 1108: __all_column_privilege_history
+# 1108: __all_column_privilege  # BASE_TABLE_NAME
+# 1111: __all_detect_lock_info_v2
+# 1116: __ft_dict_ik_utf8
+# 1117: __ft_stopword_ik_utf8
+# 1118: __ft_quantifier_ik_utf8
+# 1124: __all_vector_index_task
+# 1125: __all_vector_index_task_history
+# 1128: __all_ai_model
+# 1129: __all_ai_model_history
+# 1129: __all_ai_model  # BASE_TABLE_NAME
+# 1130: __all_ai_model_endpoint
+# 1131: __all_ai_column
+# 1132: __all_ai_column_task
+# 1133: __all_objauth_mysql
+# 1134: __all_objauth_mysql_history
+# 1134: __all_objauth_mysql  # BASE_TABLE_NAME
+# 10001: __all_virtual_all_table
+# 10002: __all_virtual_table_column
+# 10003: __all_virtual_table_index
+# 10004: __all_virtual_show_create_database
+# 10005: __all_virtual_show_create_table
+# 10006: __all_virtual_session_variable
+# 10007: __all_virtual_privilege_grant
+# 10008: __all_virtual_processlist
+# 10009: __all_virtual_warning
+# 10011: __all_virtual_database_status
+# 10017: __all_virtual_global_variable
+# 10018: __all_virtual_show_tables
+# 10019: __all_virtual_show_create_procedure
+# 11003: __all_virtual_plan_cache_stat
+# 11004: __all_virtual_plan_stat
+# 11008: __all_virtual_kvcache_info
+# 11009: __all_virtual_data_type_class
+# 11010: __all_virtual_data_type
+# 11018: __all_virtual_memstore_info
+# 11019: __all_virtual_concurrency_object_pool
+# 11023: __all_virtual_disk_stat
+# 11024: __all_virtual_tablet_memstore_info
+# 11027: __all_virtual_trans_stat
+# 11028: __all_virtual_trans_ctx_mgr_stat
+# 11029: __all_virtual_trans_scheduler
+# 11035: __all_virtual_core_all_table
+# 11035: __all_table  # BASE_TABLE_NAME
+# 11036: __all_virtual_core_column_table
+# 11036: __all_column  # BASE_TABLE_NAME
+# 11037: __all_virtual_memory_info
+# 11039: __all_virtual_sys_parameter_stat
+# 11041: __all_virtual_sys_parameter
+# 11043: __all_virtual_engine
+# 11048: __all_virtual_plan_cache_plan_explain
+# 11053: __all_virtual_outline
+# 11056: __all_virtual_tablet_sstable_macro_info
+# 11071: __all_virtual_sys_task_status
+# 11072: __all_virtual_macro_block_marker_status
+# 11080: __all_virtual_io_stat
+# 11081: __all_virtual_long_ops_status
+# 11084: __all_virtual_server_object_pool
+# 11085: __all_virtual_trans_lock_stat
+# 11092: __all_virtual_parameter_stat
+# 11093: __all_virtual_server_schema_info
+# 11094: __all_virtual_memory_context_stat
+# 11095: __all_virtual_dump_info
+# 11099: __all_virtual_dag_warning_history
+# 11105: __all_virtual_dag
+# 11106: __all_virtual_dag_scheduler
+# 11107: __all_virtual_server_compaction_progress
+# 11108: __all_virtual_tablet_compaction_progress
+# 11109: __all_virtual_compaction_diagnose_info
+# 11110: __all_virtual_compaction_suggestion
+# 11111: __all_virtual_session_info
+# 11112: __all_virtual_tablet_compaction_history
+# 11113: __all_virtual_io_calibration_status
+# 11114: __all_virtual_io_benchmark
+# 11115: __all_virtual_io_quota
+# 11116: __all_virtual_server_compaction_event_history
+# 11117: __all_virtual_tablet_stat
+# 11118: __all_virtual_ddl_sim_point
+# 11119: __all_virtual_ddl_sim_point_stat
+# 12001: SESSION_VARIABLES
+# 12006: GLOBAL_STATUS
+# 12008: SESSION_STATUS
+# 12009: user
+# 12010: db
+# 12013: __all_virtual_lock_wait_stat
+# 12031: __all_virtual_collation
+# 12032: __all_virtual_charset
+# 12033: __all_virtual_memstore_allocator_info
+# 12034: __all_virtual_table_mgr
+# 12038: __all_virtual_bad_block_table
+# 12039: __all_virtual_px_worker_stat
+# 12058: __all_virtual_tablet_store_stat
+# 12121: __all_virtual_raid_stat
+# 12123: __all_virtual_dtl_channel
+# 12124: __all_virtual_dtl_memory
+# 12144: __ALL_VIRTUAL_INFORMATION_COLUMNS
+# 12155: __all_virtual_ps_stat
+# 12156: __all_virtual_ps_item_info
+# 12158: __all_virtual_sql_workarea_history_stat
+# 12159: __all_virtual_sql_workarea_active
+# 12160: __all_virtual_sql_workarea_histogram
+# 12161: __all_virtual_sql_workarea_memory_info
+# 12176: __all_virtual_id_service
+# 12187: __all_virtual_open_cursor
+# 12196: __all_virtual_files
+# 12209: __all_virtual_deadlock_event_history
+# 12211: __all_virtual_ctx_memory_info
+# 12222: __all_virtual_show_create_trigger
+# 12223: __all_virtual_px_target_monitor
+# 12240: __all_virtual_tablet_meta_table
+# 12242: __all_virtual_load_data_stat
+# 12254: __all_virtual_log_stat
+# 12258: __all_virtual_tablet_local_checksum
+# 12276: __all_virtual_server_stat
+# 12278: __all_virtual_dtl_interm_result_monitor
+# 12280: __all_virtual_apply_stat
+# 12281: __all_virtual_replay_stat
+# 12287: __all_virtual_ls_info
+# 12288: __all_virtual_tablet_info
+# 12289: __all_virtual_obj_lock
+# 12291: __all_virtual_merge_info
+# 12292: __all_virtual_tx_data_table
+# 12293: __all_virtual_transaction_freeze_checkpoint
+# 12294: __all_virtual_transaction_checkpoint
+# 12295: __all_virtual_checkpoint
+# 12303: __all_virtual_dml_stats
+# 12315: __all_virtual_tablet_ddl_kv_info
+# 12316: __all_virtual_privilege
+# 12317: __all_virtual_tablet_pointer_status
+# 12318: __all_virtual_storage_meta_memory_status
+# 12319: __all_virtual_kvcache_store_memblock
+# 12330: __all_virtual_column_checksum_error_info
+# 12334: __all_virtual_tablet_compaction_info
+# 12336: __all_virtual_schema_memory
+# 12337: __all_virtual_schema_slot
+# 12338: __all_virtual_minor_freeze_info
+# 12339: __all_virtual_show_trace
+# 12359: __all_virtual_sql_plan
+# 12363: __all_virtual_malloc_sample_info
+# 12373: __all_virtual_mds_node_stat
+# 12374: __all_virtual_mds_event_history
+# 12380: __all_virtual_tx_data
+# 12383: __all_virtual_opt_stat_gather_monitor
+# 12395: __all_virtual_timestamp_service
+# 12397: __all_virtual_px_p2p_datahub
+# 12405: __all_virtual_tablet_buffer_info
+# 12429: __all_virtual_data_activity_metrics
+# 12442: __all_virtual_scheduler_running_job
+# 12445: __all_virtual_sqlstat
+# 12450: __all_virtual_sys_variable_default_value
+# 12466: ENABLED_ROLES
+# 12468: __all_virtual_session_ps_info
+# 12469: __all_virtual_tracepoint_info
+# 12481: __all_virtual_resource_limit
+# 12482: __all_virtual_resource_limit_detail
+# 12483: __all_virtual_group_io_stat
+# 12487: __all_virtual_nic_info
+# 12496: __all_virtual_vector_index_info
+# 12505: __all_virtual_temp_file
+# 12550: __all_virtual_vector_mem_info
+# 12563: __all_virtual_rootservice_job
+# 12564: __all_virtual_change_stream_refresh_stat
+# 20003: SCHEMATA
+# 20004: CHARACTER_SETS
+# 20005: GLOBAL_VARIABLES
+# 20006: STATISTICS
+# 20007: VIEWS
+# 20008: TABLES
+# 20009: COLLATIONS
+# 20010: COLLATION_CHARACTER_SET_APPLICABILITY
+# 20011: PROCESSLIST
+# 20012: KEY_COLUMN_USAGE
+# 20014: ENGINES
+# 20015: ROUTINES
+# 20016: PROFILING
+# 20017: OPTIMIZER_TRACE
+# 20019: INNODB_SYS_COLUMNS
+# 20020: INNODB_FT_BEING_DELETED
+# 20021: INNODB_FT_CONFIG
+# 20022: INNODB_FT_DELETED
+# 20023: INNODB_FT_INDEX_CACHE
+# 21017: V$OB_MEMORY
+# 21023: V$OB_PLAN_CACHE_PLAN_STAT
+# 21038: DBA_RECYCLEBIN
+# 21055: time_zone_name
+# 21056: time_zone_transition
+# 21057: time_zone_transition_type
+# 21060: V$SESSION_LONGOPS
+# 21068: COLUMNS
+# 21084: V$SQL_WORKAREA
+# 21086: V$SQL_WORKAREA_ACTIVE
+# 21088: V$SQL_WORKAREA_HISTOGRAM
+# 21101: V$OB_SSTABLES
+# 21119: V$OB_MERGE_INFO
+# 21149: V$OB_PX_TARGET_MONITOR
+# 21150: COLUMN_PRIVILEGES
+# 21151: VIEW_TABLE_USAGE
+# 21157: FILES
+# 21180: DBA_OB_DATABASES
+# 21186: DBA_OB_MAJOR_COMPACTION
+# 21204: DBA_OBJECTS
+# 21205: DBA_PART_TABLES
+# 21206: DBA_PART_KEY_COLUMNS
+# 21207: DBA_SUBPART_KEY_COLUMNS
+# 21208: DBA_TAB_PARTITIONS
+# 21209: DBA_TAB_SUBPARTITIONS
+# 21210: DBA_SUBPARTITION_TEMPLATES
+# 21211: DBA_PART_INDEXES
+# 21212: DBA_IND_PARTITIONS
+# 21213: DBA_IND_SUBPARTITIONS
+# 21215: V$OB_SERVER_STAT
+# 21220: V$OB_PARAMETERS
+# 21222: V$OB_PROCESSLIST
+# 21226: V$OB_TRANSACTION_WRITE_STATE
+# 21232: V$OB_TABLET_COMPACTION_HISTORY
+# 21234: V$OB_COMPACTION_DIAGNOSE_INFO
+# 21251: DBA_TAB_STATISTICS
+# 21252: DBA_TAB_COL_STATISTICS
+# 21253: DBA_PART_COL_STATISTICS
+# 21254: DBA_SUBPART_COL_STATISTICS
+# 21255: DBA_TAB_HISTOGRAMS
+# 21256: DBA_PART_HISTOGRAMS
+# 21257: DBA_SUBPART_HISTOGRAMS
+# 21258: DBA_TAB_STATS_HISTORY
+# 21259: DBA_IND_STATISTICS
+# 21270: V$DML_STATS
+# 21271: DBA_TAB_MODIFICATIONS
+# 21272: DBA_SCHEDULER_JOBS
+# 21282: DBA_OB_OUTLINES
+# 21297: DBA_OB_DEADLOCK_EVENT_HISTORY
+# 21303: V$OB_LOG_STAT
+# 21304: ST_GEOMETRY_COLUMNS
+# 21305: ST_SPATIAL_REFERENCE_SYSTEMS
+# 21326: DBA_OB_FREEZE_INFO
+# 21332: DBA_OB_AUTO_INCREMENT
+# 21335: DBA_SCHEDULER_WINDOWS
+# 21336: DBA_OB_USERS
+# 21338: DBA_OB_DATABASE_PRIVILEGE
+# 21346: PARAMETERS
+# 21347: TABLE_PRIVILEGES
+# 21348: USER_PRIVILEGES
+# 21349: SCHEMA_PRIVILEGES
+# 21350: CHECK_CONSTRAINTS
+# 21351: REFERENTIAL_CONSTRAINTS
+# 21352: TABLE_CONSTRAINTS
+# 21354: V$OB_TRANSACTION_SCHEDULERS
+# 21355: TRIGGERS
+# 21356: PARTITIONS
+# 21377: V$OB_OPT_STAT_GATHER_MONITOR
+# 21400: V$OB_LOCKS
+# 21404: V$OB_TIMESTAMP_SERVICE
+# 21420: V$OB_PX_P2P_DATAHUB
+# 21423: DBA_OB_TABLE_STAT_STALE_INFO
+# 21460: V$OB_SESSION
+# 21462: V$OB_PL_CACHE_OBJECT
+# 21485: DBA_OB_FORMAT_OUTLINES
+# 21486: procs_priv
+# 21497: DBA_OB_AUX_STATISTICS
+# 21500: DBA_OB_SYS_VARIABLES
+# 21511: role_edges
+# 21512: default_roles
+# 21516: columns_priv
+# 21554: INNODB_LOCK_WAITS
+# 21555: INNODB_LOCKS
+# 21556: INNODB_TRX
+# 21557: NDB_TRANSID_MYSQL_CONNECTION_MAP
+# 21558: V$OB_GROUP_IO_STAT
+# 21562: TABLESPACES
+# 21563: INNODB_BUFFER_PAGE
+# 21564: INNODB_BUFFER_PAGE_LRU
+# 21565: INNODB_BUFFER_POOL_STATS
+# 21566: INNODB_CMP
+# 21567: INNODB_CMP_PER_INDEX
+# 21568: INNODB_CMP_PER_INDEX_RESET
+# 21569: INNODB_CMP_RESET
+# 21570: INNODB_CMPMEM
+# 21571: INNODB_CMPMEM_RESET
+# 21572: INNODB_SYS_DATAFILES
+# 21573: INNODB_SYS_INDEXES
+# 21574: INNODB_SYS_TABLES
+# 21575: INNODB_SYS_TABLESPACES
+# 21576: INNODB_SYS_TABLESTATS
+# 21577: INNODB_SYS_VIRTUAL
+# 21578: INNODB_TEMP_TABLE_INFO
+# 21579: INNODB_METRICS
+# 21582: ROLE_TABLE_GRANTS
+# 21583: ROLE_COLUMN_GRANTS
+# 21584: ROLE_ROUTINE_GRANTS
+# 21595: DBA_OB_TABLE_SPACE_USAGE
+# 21603: INNODB_SYS_FIELDS
+# 21604: INNODB_SYS_FOREIGN
+# 21605: INNODB_SYS_FOREIGN_COLS
+# 21622: DBA_OB_TEMP_FILES
+# 21628: proc
+# 21640: DBA_OB_VECTOR_INDEX_TASKS
+# 21642: DBA_OB_VECTOR_INDEX_TASK_HISTORY
+# 21662: V$OB_VECTOR_MEMORY
+# 21663: DBA_OB_AI_MODELS
+# 21664: DBA_OB_AI_MODEL_ENDPOINTS
+# 21667: DBA_OB_ROOTSERVICE_JOBS
+# 21668: DBA_OB_CHANGE_STREAM_REFRESH_STAT
+# 100001: __idx_3_idx_data_table_id
+# 100001: idx_data_table_id  # INDEX_NAME
+# 100001: __all_table  # DATA_BASE_TABLE_NAME
+# 100002: __idx_3_idx_db_tb_name
+# 100002: idx_db_tb_name  # INDEX_NAME
+# 100002: __all_table  # DATA_BASE_TABLE_NAME
+# 100003: __idx_3_idx_tb_name
+# 100003: idx_tb_name  # INDEX_NAME
+# 100003: __all_table  # DATA_BASE_TABLE_NAME
+# 100004: __idx_4_idx_tb_column_name
+# 100004: idx_tb_column_name  # INDEX_NAME
+# 100004: __all_column  # DATA_BASE_TABLE_NAME
+# 100005: __idx_4_idx_column_name
+# 100005: idx_column_name  # INDEX_NAME
+# 100005: __all_column  # DATA_BASE_TABLE_NAME
+# 100006: __idx_5_idx_ddl_type
+# 100006: idx_ddl_type  # INDEX_NAME
+# 100006: __all_ddl_operation  # DATA_BASE_TABLE_NAME
+# 100012: __idx_12_idx_data_table_id
+# 100012: idx_data_table_id  # INDEX_NAME
+# 100012: __all_table  # DATA_BASE_TABLE_NAME
+# 100012: __all_table_history  # DATA_BASE_TABLE_NAME1
+# 102000: __idx_1060_idx_task_key
+# 102000: idx_task_key  # INDEX_NAME
+# 102000: __all_ddl_task_status  # DATA_BASE_TABLE_NAME
+# 102001: __idx_1000_idx_ur_name
+# 102001: idx_ur_name  # INDEX_NAME
+# 102001: __all_user  # DATA_BASE_TABLE_NAME
+# 102002: __idx_1002_idx_db_name
+# 102002: idx_db_name  # INDEX_NAME
+# 102002: __all_database  # DATA_BASE_TABLE_NAME
+# 102006: __idx_1020_idx_recyclebin_db_type
+# 102006: idx_recyclebin_db_type  # INDEX_NAME
+# 102006: __all_recyclebin  # DATA_BASE_TABLE_NAME
+# 101000: __idx_100_idx_part_name
+# 101000: idx_part_name  # INDEX_NAME
+# 101000: __all_part  # DATA_BASE_TABLE_NAME
+# 101001: __idx_102_idx_sub_part_name
+# 101001: idx_sub_part_name  # INDEX_NAME
+# 101001: __all_sub_part  # DATA_BASE_TABLE_NAME
+# 101002: __idx_106_idx_def_sub_part_name
+# 101002: idx_def_sub_part_name  # INDEX_NAME
+# 101002: __all_def_sub_part  # DATA_BASE_TABLE_NAME
+# 101003: __idx_109_idx_fk_child_tid
+# 101003: idx_fk_child_tid  # INDEX_NAME
+# 101003: __all_foreign_key  # DATA_BASE_TABLE_NAME
+# 101004: __idx_109_idx_fk_parent_tid
+# 101004: idx_fk_parent_tid  # INDEX_NAME
+# 101004: __all_foreign_key  # DATA_BASE_TABLE_NAME
+# 101005: __idx_109_idx_fk_name
+# 101005: idx_fk_name  # INDEX_NAME
+# 101005: __all_foreign_key  # DATA_BASE_TABLE_NAME
+# 101006: __idx_110_idx_fk_his_child_tid
+# 101006: idx_fk_his_child_tid  # INDEX_NAME
+# 101006: __all_foreign_key  # DATA_BASE_TABLE_NAME
+# 101006: __all_foreign_key_history  # DATA_BASE_TABLE_NAME1
+# 101007: __idx_110_idx_fk_his_parent_tid
+# 101007: idx_fk_his_parent_tid  # INDEX_NAME
+# 101007: __all_foreign_key  # DATA_BASE_TABLE_NAME
+# 101007: __all_foreign_key_history  # DATA_BASE_TABLE_NAME1
+# 102007: __idx_1025_idx_ddl_checksum_task
+# 102007: idx_ddl_checksum_task  # INDEX_NAME
+# 102007: __all_ddl_checksum  # DATA_BASE_TABLE_NAME
+# 102008: __idx_1026_idx_db_routine_name
+# 102008: idx_db_routine_name  # INDEX_NAME
+# 102008: __all_routine  # DATA_BASE_TABLE_NAME
+# 102009: __idx_1026_idx_routine_name
+# 102009: idx_routine_name  # INDEX_NAME
+# 102009: __all_routine  # DATA_BASE_TABLE_NAME
+# 102010: __idx_1026_idx_routine_pkg_id
+# 102010: idx_routine_pkg_id  # INDEX_NAME
+# 102010: __all_routine  # DATA_BASE_TABLE_NAME
+# 102011: __idx_1028_idx_routine_param_name
+# 102011: idx_routine_param_name  # INDEX_NAME
+# 102011: __all_routine_param  # DATA_BASE_TABLE_NAME
+# 102012: __idx_1030_idx_db_pkg_name
+# 102012: idx_db_pkg_name  # INDEX_NAME
+# 102012: __all_package  # DATA_BASE_TABLE_NAME
+# 102013: __idx_1030_idx_pkg_name
+# 102013: idx_pkg_name  # INDEX_NAME
+# 102013: __all_package  # DATA_BASE_TABLE_NAME
+# 102014: __idx_1032_idx_snapshot_tablet
+# 102014: idx_snapshot_tablet  # INDEX_NAME
+# 102014: __all_acquired_snapshot  # DATA_BASE_TABLE_NAME
+# 101008: __idx_111_idx_cst_name
+# 101008: idx_cst_name  # INDEX_NAME
+# 101008: __all_constraint  # DATA_BASE_TABLE_NAME
+# 102015: __idx_1040_idx_grantee_role_id
+# 102015: idx_grantee_role_id  # INDEX_NAME
+# 102015: __all_role_grantee_map  # DATA_BASE_TABLE_NAME
+# 102016: __idx_1041_idx_grantee_his_role_id
+# 102016: idx_grantee_his_role_id  # INDEX_NAME
+# 102016: __all_role_grantee_map  # DATA_BASE_TABLE_NAME
+# 102016: __all_role_grantee_map_history  # DATA_BASE_TABLE_NAME1
+# 101009: __idx_113_idx_trigger_base_obj_id
+# 101009: idx_trigger_base_obj_id  # INDEX_NAME
+# 101009: __all_trigger  # DATA_BASE_TABLE_NAME
+# 101010: __idx_113_idx_db_trigger_name
+# 101010: idx_db_trigger_name  # INDEX_NAME
+# 101010: __all_trigger  # DATA_BASE_TABLE_NAME
+# 101011: __idx_113_idx_trigger_name
+# 101011: idx_trigger_name  # INDEX_NAME
+# 101011: __all_trigger  # DATA_BASE_TABLE_NAME
+# 101012: __idx_114_idx_trigger_his_base_obj_id
+# 101012: idx_trigger_his_base_obj_id  # INDEX_NAME
+# 101012: __all_trigger  # DATA_BASE_TABLE_NAME
+# 101012: __all_trigger_history  # DATA_BASE_TABLE_NAME1
+# 102017: __idx_1045_idx_objauth_grantor
+# 102017: idx_objauth_grantor  # INDEX_NAME
+# 102017: __all_objauth  # DATA_BASE_TABLE_NAME
+# 102018: __idx_1045_idx_objauth_grantee
+# 102018: idx_objauth_grantee  # INDEX_NAME
+# 102018: __all_objauth  # DATA_BASE_TABLE_NAME
+# 102019: __idx_1054_idx_dependency_ref_obj
+# 102019: idx_dependency_ref_obj  # INDEX_NAME
+# 102019: __all_dependency  # DATA_BASE_TABLE_NAME
+# 102020: __idx_1058_idx_ddl_error_object
+# 102020: idx_ddl_error_object  # INDEX_NAME
+# 102020: __all_ddl_error_message  # DATA_BASE_TABLE_NAME
+# 102021: __idx_1067_idx_table_stat_his_savtime
+# 102021: idx_table_stat_his_savtime  # INDEX_NAME
+# 102021: __all_table_stat_history  # DATA_BASE_TABLE_NAME
+# 102022: __idx_118_idx_column_stat_his_savtime
+# 102022: idx_column_stat_his_savtime  # INDEX_NAME
+# 102022: __all_column_stat_history  # DATA_BASE_TABLE_NAME
+# 102023: __idx_119_idx_histogram_stat_his_savtime
+# 102023: idx_histogram_stat_his_savtime  # INDEX_NAME
+# 102023: __all_histogram_stat_history  # DATA_BASE_TABLE_NAME
+# 102024: __idx_1070_idx_tablet_to_table_id
+# 102024: idx_tablet_to_table_id  # INDEX_NAME
+# 102024: __all_tablet_to_table  # DATA_BASE_TABLE_NAME
+# 102028: __idx_1062_idx_job_powner
+# 102028: idx_job_powner  # INDEX_NAME
+# 102028: __all_job  # DATA_BASE_TABLE_NAME
+# 102031: __idx_1020_idx_recyclebin_ori_name
+# 102031: idx_recyclebin_ori_name  # INDEX_NAME
+# 102031: __all_recyclebin  # DATA_BASE_TABLE_NAME
+# 102032: __idx_1006_idx_tb_priv_db_name
+# 102032: idx_tb_priv_db_name  # INDEX_NAME
+# 102032: __all_table_privilege  # DATA_BASE_TABLE_NAME
+# 102033: __idx_1006_idx_tb_priv_tb_name
+# 102033: idx_tb_priv_tb_name  # INDEX_NAME
+# 102033: __all_table_privilege  # DATA_BASE_TABLE_NAME
+# 102034: __idx_1008_idx_db_priv_db_name
+# 102034: idx_db_priv_db_name  # INDEX_NAME
+# 102034: __all_database_privilege  # DATA_BASE_TABLE_NAME
+# 102035: __idx_1098_idx_dbms_lock_allocated_lockhandle
+# 102035: idx_dbms_lock_allocated_lockhandle  # INDEX_NAME
+# 102035: __all_dbms_lock_allocated  # DATA_BASE_TABLE_NAME
+# 102036: __idx_1098_idx_dbms_lock_allocated_expiration
+# 102036: idx_dbms_lock_allocated_expiration  # INDEX_NAME
+# 102036: __all_dbms_lock_allocated  # DATA_BASE_TABLE_NAME
+# 102042: __idx_1107_idx_column_privilege_name
+# 102042: idx_column_privilege_name  # INDEX_NAME
+# 102042: __all_column_privilege  # DATA_BASE_TABLE_NAME
+# 102055: __idx_1130_idx_endpoint_name
+# 102055: idx_endpoint_name  # INDEX_NAME
+# 102055: __all_ai_model_endpoint  # DATA_BASE_TABLE_NAME
+# 102056: __idx_1130_idx_ai_model_name
+# 102056: idx_ai_model_name  # INDEX_NAME
+# 102056: __all_ai_model_endpoint  # DATA_BASE_TABLE_NAME
+# 102058: __idx_1133_idx_objauth_mysql_user_id
+# 102058: idx_objauth_mysql_user_id  # INDEX_NAME
+# 102058: __all_objauth_mysql  # DATA_BASE_TABLE_NAME
+# 102059: __idx_1133_idx_objauth_mysql_obj_name
+# 102059: idx_objauth_mysql_obj_name  # INDEX_NAME
+# 102059: __all_objauth_mysql  # DATA_BASE_TABLE_NAME

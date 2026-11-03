@@ -37,8 +37,8 @@ namespace sql
 OB_SERIALIZE_MEMBER(ObSelectIntoOpInput, task_id_, sqc_id_);
 OB_SERIALIZE_MEMBER((ObSelectIntoSpec, ObOpSpec), into_type_, user_vars_, outfile_name_,
     field_str_, line_str_, closed_cht_, is_optional_, select_exprs_, is_single_, max_file_size_,
-    escaped_cht_, cs_type_, parallel_, buffer_size_, is_overwrite_,
-    external_properties_);
+    escaped_cht_, cs_type_, parallel_, buffer_size_, is_overwrite_, header_,
+    header_names_, external_properties_);
 
 
 int ObSelectIntoOp::inner_open()
@@ -952,6 +952,26 @@ int ObSelectIntoOp::into_outfile(ObExternalFileWriter *data_writer)
   ObCsvFileWriter *csv_data_writer = NULL;
   if (OB_ISNULL(csv_data_writer = static_cast<ObCsvFileWriter *>(data_writer))) {
     ret = OB_ERR_UNEXPECTED;
+  }
+  // write the header line once per file when the statement asked for it
+  if (OB_SUCC(ret) && MY_SPEC.header_ && !header_done_) {
+    for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.header_names_.count(); ++i) {
+      if (i >= select_exprs.count()) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        ObObj name_obj;
+        name_obj.set_varchar(MY_SPEC.header_names_.at(i));
+        name_obj.set_collation_type(ObCharset::get_default_collation(ObCharset::get_default_charset()));
+        OZ(print_field(name_obj, *csv_data_writer));
+        if (OB_SUCC(ret) && i != select_exprs.count() - 1) {
+          OZ(write_obj_to_file(field_str_, *csv_data_writer));
+        }
+      }
+    }
+    if (OB_SUCC(ret)) {
+      OZ(write_obj_to_file(line_str_, *csv_data_writer));
+      header_done_ = true;
+    }
   }
   for (int64_t i = 0; OB_SUCC(ret) && i < select_exprs.count(); ++i) {
     if (OB_ISNULL(select_exprs.at(i))) {
