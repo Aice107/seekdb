@@ -154,7 +154,7 @@ int ObInnerTableSchema::dba_ob_ai_model_endpoints_schema(ObTableSchema &table_sc
   table_schema.set_collation_type(ObCharset::get_default_collation(ObCharset::get_default_charset()));
 
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(table_schema.set_view_definition(R"__(     SELECT       ENDPOINT_ID,       ENDPOINT_NAME,       AI_MODEL_NAME,       SCOPE,       URL,       ACCESS_KEY,       PROVIDER,       REQUEST_MODEL_NAME,       PARAMETERS,       REQUEST_TRANSFORM_FN,       RESPONSE_TRANSFORM_FN     FROM oceanbase.__all_ai_model_endpoint WHERE ENDPOINT_ID != -1;   )__"))) {
+    if (OB_FAIL(table_schema.set_view_definition(R"__(     SELECT       ENDPOINT_ID,       ENDPOINT_NAME,       AI_MODEL_NAME,       SCOPE,       URL,       ACCESS_KEY,       PROVIDER,       REQUEST_MODEL_NAME,       PARAMETERS,       REQUEST_TRANSFORM_FN,       RESPONSE_TRANSFORM_FN,       MAX_CONCURRENCY     FROM oceanbase.__all_ai_model_endpoint WHERE ENDPOINT_ID != -1;   )__"))) {
       LOG_ERROR("fail to set view_definition", K(ret));
     }
   }
