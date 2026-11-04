@@ -228,6 +228,111 @@ int ObIKFTParserDesc::get_add_word_flag(ObAddWordFlag &flag) const
   return ret;
 }
 
+// The IK dictionaries are immutable once built. Loading them into a fresh parser on every
+// tokenize call costs three cache range loads (main/quan/stopword) per document, which is a
+// large fixed overhead for short documents and for every query. Keep one set of dictionaries
+// per process and share it between parser instances: the dictionaries are read-only during
+// matching, so this does not change the tokenization result.
+class ObIKDictCache
+{
+public:
+  ObIKDictCache()
+    : alloc_(),
+      inited_(false),
+      range_main_(nullptr),
+      range_quan_(nullptr),
+      range_stop_(nullptr),
+      dict_main_(nullptr),
+      dict_quan_(nullptr),
+      dict_stop_(nullptr) {}
+  ~ObIKDictCache() { reset(); }
+  void reset()
+  {
+    if (OB_NOT_NULL(dict_main_)) {
+      dict_main_->~ObIFTDict();
+      alloc_.free(dict_main_);
+      dict_main_ = nullptr;
+    }
+    if (OB_NOT_NULL(dict_quan_)) {
+      dict_quan_->~ObIFTDict();
+      alloc_.free(dict_quan_);
+      dict_quan_ = nullptr;
+    }
+    if (OB_NOT_NULL(dict_stop_)) {
+      dict_stop_->~ObIFTDict();
+      alloc_.free(dict_stop_);
+      dict_stop_ = nullptr;
+    }
+    if (OB_NOT_NULL(range_main_)) {
+      range_main_->~ObFTCacheRangeContainer();
+      alloc_.free(range_main_);
+      range_main_ = nullptr;
+    }
+    if (OB_NOT_NULL(range_quan_)) {
+      range_quan_->~ObFTCacheRangeContainer();
+      alloc_.free(range_quan_);
+      range_quan_ = nullptr;
+    }
+    if (OB_NOT_NULL(range_stop_)) {
+      range_stop_->~ObFTCacheRangeContainer();
+      alloc_.free(range_stop_);
+      range_stop_ = nullptr;
+    }
+    alloc_.reset();
+    inited_ = false;
+  }
+public:
+  ObArenaAllocator alloc_;
+  common::ObSpinLock lock_;
+  bool inited_;
+  ObFTCacheRangeContainer *range_main_;
+  ObFTCacheRangeContainer *range_quan_;
+  ObFTCacheRangeContainer *range_stop_;
+  ObIFTDict *dict_main_;
+  ObIFTDict *dict_quan_;
+  ObIFTDict *dict_stop_;
+};
+
+ObIKDictCache &get_ik_dict_cache()
+{
+  // The IK dictionaries are always built with the utf8mb4 binary collation and never change,
+  // so one immutable copy per process is enough. Sharing it avoids reloading the three
+  // dictionaries (main/quan/stopword) for every tokenize call, which dominates the cost for
+  // short documents and for every full-text query.
+  static ObIKDictCache cache;
+  return cache;
+}
+
+static int build_dict_into_cache(ObFTDictHub *hub,
+                                 const ObFTDictDesc &desc,
+                                 ObArenaAllocator &alloc,
+                                 ObFTCacheRangeContainer *&container,
+                                 ObIFTDict *&dict)
+{
+  int ret = OB_SUCCESS;
+  void *mem = nullptr;
+  if (OB_ISNULL(hub)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_ISNULL(mem = alloc.alloc(sizeof(ObFTCacheRangeContainer)))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    container = new (mem) ObFTCacheRangeContainer(alloc);
+    if (OB_FAIL(hub->load_cache(desc, *container))) {
+      if (OB_ENTRY_NOT_EXIST == ret) {
+        if (OB_FAIL(hub->build_cache(desc, *container))) {
+        }
+      }
+    }
+    if (OB_FAIL(ret)) {
+    } else if (OB_ISNULL(dict = OB_NEWx(ObFTRangeDict, &alloc, alloc, container, desc))) {
+      ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (OB_FAIL(dict->init())) {
+      OB_DELETEx(ObIFTDict, &alloc, dict);
+    }
+  }
+  return ret;
+}
+
 int ObIKFTParser::init_dict(const ObFTParserParam &param)
 {
   int ret = OB_SUCCESS;
@@ -237,7 +342,6 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
     ret = OB_ERR_UNEXPECTED;
   }
 
-  ObFTRangeDict *dict = nullptr;
   ObFTDictDesc main_dict_desc("main_dict",
                               ObFTDictType::DICT_IK_MAIN,
                               ObCharsetType::CHARSET_UTF8MB4,
@@ -253,22 +357,34 @@ int ObIKFTParser::init_dict(const ObFTParserParam &param)
                                   ObCharsetType::CHARSET_UTF8MB4,
                                   ObCollationType::CS_TYPE_UTF8MB4_BIN);
 
-  if (should_read_newest_table()) {
-    // clear dict cache, always false now
+  ObIKDictCache &cache = get_ik_dict_cache();
+  if (OB_FAIL(ret)) {
   } else {
-    if (OB_FAIL(init_single_dict(main_dict_desc, cache_main_))) {
-    } else if (OB_FAIL(init_single_dict(quan_dict_desc, cache_quan_))) {
-    } else if (OB_FAIL(init_single_dict(stopword_dict_desc, cache_stop_))) {
+    ObSpinLockGuard guard(cache.lock_);
+    if (!cache.inited_) {
+      int tmp_ret = OB_SUCCESS;
+      if (OB_SUCCESS != (tmp_ret = build_dict_into_cache(hub_, main_dict_desc, cache.alloc_,
+                                                         cache.range_main_, cache.dict_main_))) {
+        ret = tmp_ret;
+      } else if (OB_SUCCESS != (tmp_ret = build_dict_into_cache(hub_, quan_dict_desc, cache.alloc_,
+                                                                cache.range_quan_, cache.dict_quan_))) {
+        ret = tmp_ret;
+      } else if (OB_SUCCESS != (tmp_ret = build_dict_into_cache(hub_, stopword_dict_desc, cache.alloc_,
+                                                                cache.range_stop_, cache.dict_stop_))) {
+        ret = tmp_ret;
+      } else {
+        cache.inited_ = true;
+      }
+      if (OB_FAIL(ret)) {
+        // leave the partially built cache: it is retried by the next call
+      }
+    }
+    if (OB_SUCC(ret)) {
+      dict_main_ = cache.dict_main_;
+      dict_quan_ = cache.dict_quan_;
+      dict_stop_ = cache.dict_stop_;
     }
   }
-
-  if (OB_FAIL(ret)) {
-    // already logged.
-  } else if (OB_FAIL(build_dict_from_cache(main_dict_desc, cache_main_, dict_main_))) {
-  } else if (OB_FAIL(build_dict_from_cache(quan_dict_desc, cache_quan_, dict_quan_))) {
-  } else if (OB_FAIL(build_dict_from_cache(stopword_dict_desc, cache_stop_, dict_stop_))) {
-  }
-
   return ret;
 }
 
@@ -365,19 +481,10 @@ void ObIKFTParser::reset()
   cache_main_.reset();
   cache_quan_.reset();
   cache_stop_.reset();
-
-  if (!OB_ISNULL(dict_main_)) {
-    dict_main_->~ObIFTDict();
-    allocator_.free(dict_main_);
-  }
-  if (!OB_ISNULL(dict_quan_)) {
-    dict_quan_->~ObIFTDict();
-    allocator_.free(dict_quan_);
-  }
-  if (!OB_ISNULL(dict_stop_)) {
-    dict_stop_->~ObIFTDict();
-    allocator_.free(dict_stop_);
-  }
+  // the dictionaries are owned by the thread-local dict cache, do not free them here
+  dict_main_ = nullptr;
+  dict_quan_ = nullptr;
+  dict_stop_ = nullptr;
 
   is_inited_ = false;
 }
