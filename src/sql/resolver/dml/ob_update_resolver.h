@@ -51,7 +51,7 @@ private:
   int check_join_update_conflict();
   int is_join_table_update(const ObDMLStmt *stmt, bool &is_multi_table);
   int check_view_updatable();
-  int add_ai_vector_invalidation_assignments();
+  int add_ai_vector_invalidation_assignments(ObTableAssignment &table_assign);
   int check_ai_column_result_assignment();
   int try_add_remove_const_expr_for_assignments();
   bool is_parent_col_self_ref_fk(uint64_t parent_col_id,
