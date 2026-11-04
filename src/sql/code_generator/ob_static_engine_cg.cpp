@@ -101,6 +101,8 @@
 #include "sql/engine/opt_statistics/ob_optimizer_stats_gathering_op.h"
 #include "sql/engine/expand/ob_expand_vec_op.h"
 #include "sql/optimizer/ob_log_values_table_access.h"
+#include "sql/optimizer/ob_log_file_table.h"
+#include "sql/engine/basic/ob_file_table_op.h"
 #include "sql/engine/basic/ob_values_table_access_op.h"
 
 namespace oceanbase
@@ -1737,6 +1739,72 @@ int ObStaticEngineCG::generate_spec(ObLogValuesTableAccess &op,
       } else if (OB_FAIL(mark_expr_self_produced(op.get_output_exprs()))) {
       } else {
         spec.rows_ = table_def->row_cnt_;
+      }
+    }
+  }
+  return ret;
+}
+
+int ObStaticEngineCG::generate_spec(ObLogFileTable &op, ObFileTableSpec &spec,
+                                    const bool in_root_job)
+{
+  int ret = OB_SUCCESS;
+  UNUSED(in_root_job);
+  const ObFileTableDef *table_def = NULL;
+  if (OB_ISNULL(table_def = op.get_file_table_def())) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(spec.column_exprs_.prepare_allocate(op.get_column_exprs().count()))) {
+  } else if (OB_FAIL(spec.column_idxs_.prepare_allocate(op.get_column_exprs().count()))) {
+  } else if (OB_FAIL(spec.column_names_.prepare_allocate(table_def->column_names_.count()))) {
+  } else if (OB_FAIL(spec.column_types_.prepare_allocate(table_def->column_names_.count()))) {
+  } else if (OB_FAIL(spec.column_nullable_.prepare_allocate(table_def->column_names_.count()))) {
+  } else {
+    // the strings must be copied into the physical plan allocator: the resolver stmt (and its
+    // allocator) is released once the plan is cached
+    ObIAllocator &plan_alloc = phy_plan_->get_allocator();
+    if (OB_FAIL(ob_write_string(plan_alloc, table_def->file_path_, spec.file_path_))) {
+    } else if (OB_FAIL(ob_write_string(plan_alloc, table_def->csv_options_.null_str_,
+                                       spec.null_str_))) {
+    } else {
+      spec.format_ = static_cast<int32_t>(table_def->format_);
+      spec.field_term_ = table_def->csv_options_.field_term_;
+      spec.line_term_ = table_def->csv_options_.line_term_;
+      spec.enclose_ = table_def->csv_options_.enclose_;
+      spec.escape_ = table_def->csv_options_.escape_;
+      spec.has_header_ = table_def->csv_options_.has_header_;
+      spec.null_str_set_ = table_def->csv_options_.null_str_set_;
+    }
+    spec.file_size_ = table_def->file_info_.size_;
+    spec.file_mtime_ = table_def->file_info_.mtime_;
+    spec.file_inode_ = table_def->file_info_.inode_;
+    spec.est_rows_ = table_def->est_rows_;
+    for (int64_t i = 0; OB_SUCC(ret) && i < table_def->column_names_.count(); ++i) {
+      if (OB_FAIL(ob_write_string(plan_alloc, table_def->column_names_.at(i),
+                                  spec.column_names_.at(i)))) {
+      } else {
+        spec.column_types_.at(i) = table_def->column_types_.at(i);
+        spec.column_nullable_.at(i) = table_def->column_nullable_.at(i);
+      }
+    }
+    for (int64_t i = 0; OB_SUCC(ret) && i < op.get_column_exprs().count(); ++i) {
+      ObColumnRefRawExpr *col_expr = op.get_column_exprs().at(i);
+      ObExpr *expr = NULL;
+      if (OB_ISNULL(col_expr)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(mark_expr_self_produced(col_expr))) {
+      } else if (OB_FAIL(generate_rt_expr(*col_expr, expr))) {
+      } else if (OB_ISNULL(expr)) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        spec.column_exprs_.at(i) = expr;
+        spec.column_idxs_.at(i) = col_expr->get_column_id() - OB_APP_MIN_COLUMN_ID;
+      }
+    }
+    if (OB_SUCC(ret)) {
+      for (int64_t i = 0; i < op.get_output_exprs().count(); ++i) {
+        if (OB_FAIL(mark_expr_self_produced(op.get_output_exprs().at(i)))) {
+          break;
+        }
       }
     }
   }
@@ -6153,6 +6221,10 @@ int ObStaticEngineCG::get_phy_op_type(ObLogicalOperator &log_op,
     }
     case log_op_def::LOG_OPTIMIZER_STATS_GATHERING: {
       type = PHY_OPTIMIZER_STATS_GATHERING;
+      break;
+    }
+    case log_op_def::LOG_FILE_TABLE: {
+      type = PHY_FILE_TABLE;
       break;
     }
     case log_op_def::LOG_VALUES_TABLE_ACCESS: {

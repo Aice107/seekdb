@@ -16,6 +16,7 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/dml/ob_insert_resolver.h"
+#include "sql/resolver/dml/ob_ai_column_utils.h"
 #include "sql/resolver/dml/ob_select_resolver.h"
 #include "sql/rewrite/ob_transform_utils.h"
 #include "ob_default_value_utils.h"
@@ -32,7 +33,8 @@ ObInsertResolver::ObInsertResolver(ObResolverParams &params)
     row_count_(0),
     sub_select_resolver_(NULL),
     autoinc_col_added_(false),
-    is_mock_(false)
+    is_mock_(false),
+    has_explicit_insert_columns_(false)
 {
   params.contain_dml_ = true;
 }
@@ -90,7 +92,8 @@ int ObInsertResolver::resolve(const ParseNode &parse_tree)
   }
 
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(insert_stmt->formalize_stmt(session_info_))) {
+    if (OB_FAIL(check_ai_column_result_assignment())) {
+    } else if (OB_FAIL(insert_stmt->formalize_stmt(session_info_))) {
     } else {
       LOG_DEBUG("check insert table info", K(insert_stmt->get_insert_table_info()));
     }
@@ -101,6 +104,72 @@ int ObInsertResolver::resolve(const ParseNode &parse_tree)
     }
   }
 
+  return ret;
+}
+
+// Business SQL must not assign an AI result column directly (requirement 2.1-6). Inserting
+// NULL is allowed (it just leaves the value to the background task).
+int ObInsertResolver::check_ai_column_result_assignment()
+{
+  int ret = OB_SUCCESS;
+  ObInsertStmt *stmt = NULL;
+  if (OB_ISNULL(stmt = get_insert_stmt()) || OB_ISNULL(schema_checker_)
+      || OB_ISNULL(session_info_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (ai_column_internal_write(session_info_)) {
+    // internal AI column worker write
+  } else {
+    ObInsertTableInfo &table_info = stmt->get_insert_table_info();
+    const ObTableSchema *table_schema = NULL;
+    if (OB_FAIL(schema_checker_->get_table_schema(table_info.ref_table_id_, table_schema))) {
+    } else if (OB_ISNULL(table_schema) || !table_schema->is_user_table()) {
+    } else {
+      const int64_t column_cnt = table_info.values_desc_.count();
+      for (int64_t i = 0; OB_SUCC(ret) && i < column_cnt; ++i) {
+        ObColumnRefRawExpr *column_expr = table_info.values_desc_.at(i);
+        if (OB_ISNULL(column_expr)) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (!is_ai_result_column(*table_schema, column_expr->get_column_id())) {
+          // normal column
+        } else {
+          // a value row that only provides NULL (or DEFAULT) for the AI column is fine: it
+          // just leaves the value to the background task
+          bool has_value = false;
+          for (int64_t v = i; OB_SUCC(ret) && v < table_info.values_vector_.count();
+               v += column_cnt) {
+            ObRawExpr *value_expr = table_info.values_vector_.at(v);
+            if (OB_ISNULL(value_expr)) {
+              ret = OB_ERR_UNEXPECTED;
+            } else if (T_NULL == value_expr->get_expr_type()
+                       || T_DEFAULT == value_expr->get_expr_type()) {
+              // no value
+            } else if (T_QUESTIONMARK == value_expr->get_expr_type()
+                       && OB_NOT_NULL(params_.param_list_)) {
+              const int64_t param_idx =
+                  static_cast<ObConstRawExpr *>(value_expr)->get_value().get_unknown();
+              if (param_idx >= 0 && param_idx < params_.param_list_->count()
+                  && params_.param_list_->at(param_idx).is_null()) {
+                // a parameter that carries NULL is not a value either
+              } else {
+                has_value = true;
+              }
+            } else {
+              has_value = true;
+            }
+          }
+          // An explicitly listed AI column is always rejected (also for NULL): otherwise a
+          // cached plan of the NULL form could be reused for a statement carrying a value.
+          // A bare "insert into t values(...)" is only rejected when a value is provided.
+          if (OB_SUCC(ret) && (has_value || has_explicit_insert_columns_)) {
+            ret = OB_NOT_SUPPORTED;
+            LOG_USER_ERROR(OB_NOT_SUPPORTED, "direct assignment to an AI column");
+            LOG_WARN("an AI result column can not be inserted directly",
+                     K(column_expr->get_column_name()));
+          }
+        }
+      }
+    }
+  }
   return ret;
 }
 
@@ -392,8 +461,11 @@ int ObInsertResolver::resolve_insert_field(const ParseNode &insert_into, TableIt
     } else { /*do nothing*/ }
   }
 
-  if (OB_SUCC(ret) && 2 == insert_into.num_child_ &&
-      OB_FAIL(resolve_insert_columns(insert_into.children_[1], insert_stmt->get_insert_table_info()))) {
+  if (OB_SUCC(ret) && 2 == insert_into.num_child_) {
+    has_explicit_insert_columns_ = OB_NOT_NULL(insert_into.children_[1]);
+    if (OB_FAIL(resolve_insert_columns(insert_into.children_[1],
+                                       insert_stmt->get_insert_table_info()))) {
+    }
   }
 
   if (OB_SUCC(ret)) {

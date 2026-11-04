@@ -300,6 +300,13 @@ ObLogicalOperator *ObLogOperatorFactory::allocate(ObLogPlan &plan, ObLogOpType t
     } else { /* do nothing */ }
     break;
   }
+  case LOG_FILE_TABLE: {
+    ptr = allocator_.alloc(sizeof(ObLogFileTable));
+    if (NULL != ptr) {
+      ret_op = new (ptr) ObLogFileTable(plan);
+    } else { /* do nothing */ }
+    break;
+  }
   case LOG_EXPAND: {
     ptr = allocator_.alloc(sizeof(ObLogExpand));
     if (NULL != ptr) {

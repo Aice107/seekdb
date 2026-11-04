@@ -1632,6 +1632,25 @@ int ObSqlParameterization::formalize_sql_filter_hint(ObIAllocator &allocator,
 
 
 
+// A file table function (read_csv/read_json/read_parquet/glob) consumes its path argument at
+// resolve time: the schema is inferred from the file named by that literal. The fast parser
+// replaces string literals with parameters, so two statements that only differ in the path
+// would share one cached plan and therefore read the wrong file. For such statements the raw
+// SQL text (which contains the path) is used as the plan cache key instead.
+static bool sql_has_file_table_function(const ObString &sql)
+{
+  static const char *FUNC_NAMES[] = {
+      "read_csv", "read_json", "read_ndjson", "read_parquet", "glob(", "__file_describe"};
+  bool found = false;
+  for (int64_t f = 0; !found && f < static_cast<int64_t>(ARRAYSIZEOF(FUNC_NAMES)); ++f) {
+    const int64_t name_len = static_cast<int64_t>(strlen(FUNC_NAMES[f]));
+    for (int64_t p = 0; !found && p + name_len <= sql.length(); ++p) {
+      found = (0 == strncasecmp(sql.ptr() + p, FUNC_NAMES[f], name_len));
+    }
+  }
+  return found;
+}
+
 int ObSqlParameterization::fast_parser(ObIAllocator &allocator,
                                        const FPContext &fp_ctx,
                                        const ObString &sql,
@@ -1704,6 +1723,11 @@ int ObSqlParameterization::fast_parser(ObIAllocator &allocator,
         } else { /*do nothing*/}
       }
     }
+  }
+  if (OB_SUCC(ret) && sql_has_file_table_function(sql)) {
+    // the path literal of a file table function is consumed at resolve time (schema inference),
+    // so statements that only differ in the path must not share one cached plan
+    (void)fp_result.pc_key_.name_.assign_ptr(sql.ptr(), sql.length());
   }
   return ret;
 }

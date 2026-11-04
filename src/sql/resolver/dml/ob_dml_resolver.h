@@ -369,6 +369,8 @@ protected:
                                   ObIArray<int64_t> &value_idxs);
 public:
   int resolve_file_sql_item(const ParseNode &table_node, TableItem *&table_item);
+  int resolve_file_describe_item(const ObIArray<ObFileSqlColumnSchema> &columns,
+                                TableItem *&table_item);
   virtual int resolve_table(const ParseNode &parse_tree, TableItem *&table_item);
   int resolve_all_basic_table_columns(const TableItem &table_item,
                                       bool included_hidden,

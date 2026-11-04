@@ -1057,7 +1057,8 @@ static int run_ai_column_tasks(common::ObMySQLProxy *proxy)
       ObSqlString set_sql;
       int64_t ignored = 0;
       if (OB_FAIL(set_sql.append_fmt(
-              "SET SESSION ob_query_timeout = 3000000, ob_trx_lock_timeout = 100000"))) {
+              "SET SESSION ob_query_timeout = 3000000, ob_trx_lock_timeout = 100000, "
+              "@__ai_column_worker = 1"))) {
       } else if (OB_FAIL(conn->execute_write(set_sql.string(), ignored))) {
         ret = OB_SUCCESS;
       }
@@ -1755,6 +1756,8 @@ int ObAlterTableExecutor::do_ai_column_retry(ObExecContext &ctx, ObAlterTableStm
                    db_name.length(), db_name.ptr(), table_name.length(), table_name.ptr(),
                    column_name.length(), column_name.ptr(),
                    where_sql.length(), where_sql.ptr()))) {
+    } else if (OB_FAIL(conn->execute_write(ObString::make_string("SET @__ai_column_worker = 1"),
+                                           affected_rows))) {
     } else if (OB_FAIL(conn->execute_write(invalidate_sql.string(), affected_rows))) {
       LOG_WARN("failed to invalidate ai column for retry", K(ret), K(invalidate_sql));
     } else if (OB_FAIL(enqueue_sql.append_fmt(

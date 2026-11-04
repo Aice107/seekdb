@@ -86,6 +86,7 @@ class ObExchangeInfo;
 class ObDmlTableInfo;
 struct IndexDMLInfo;
 class ValuesTablePath;
+class FileTablePath;
 class ObSelectLogPlan;
 class ObThreeStageAggrInfo;
 struct ObTextRetrievalInfo;
@@ -576,6 +577,8 @@ public:
   int allocate_function_table_path(FunctionTablePath *func_table_path,
                                    ObLogicalOperator *&out_access_path_op);
 
+  int allocate_file_table_path(FileTablePath *file_table_path,
+                              ObLogicalOperator *&out_access_path_op);
   int allocate_values_table_path(ValuesTablePath *values_table_path,
                                  ObLogicalOperator *&out_access_path_op);
 

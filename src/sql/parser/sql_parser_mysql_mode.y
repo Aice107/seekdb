@@ -497,7 +497,7 @@ END_P SET_VAR DELIMITER
 %type <node> dynamic_sampling_hint
 %type <node> skip_index_type opt_skip_index_type_list
 %type <node> vec_index_params vec_index_param vec_index_param_value opt_with_vector_index_parameters opt_ai_column_with
-%type <node> json_table_expr unnest_expr file_sql_expr file_sql_arg mock_jt_on_error_on_empty jt_column_list json_table_column_def copy_to_stmt opt_copy_with_options copy_option_list copy_option
+%type <node> json_table_expr unnest_expr file_sql_expr file_sql_args file_sql_arg mock_jt_on_error_on_empty jt_column_list json_table_column_def copy_to_stmt opt_copy_with_options copy_option_list copy_option
 %type <node> json_table_ordinality_column_def json_table_exists_column_def json_table_value_column_def json_table_nested_column_def
 %type <node> opt_value_on_empty_or_error_or_mismatch opt_on_mismatch
 %type <node> table_values_clause table_values_clause_with_order_by_and_limit values_row_list row_value
@@ -12316,8 +12316,8 @@ explain_or_desc relation_factor opt_desc_column_option
     ParseNode *describe_node = NULL;
     ParseNode *name_node = NULL;
     make_name_node(name_node, result->malloc_pool_, "__file_describe");
-    malloc_non_terminal_node(describe_node, result->malloc_pool_, T_FILE_SQL_TABLE, 2,
-                             name_node, table_node->children_[1]);
+    malloc_non_terminal_node(describe_node, result->malloc_pool_, T_FILE_SQL_TABLE, 3,
+                             name_node, table_node->children_[1], table_node->children_[0]);
     malloc_select_values_stmt($$, result, describe_node, NULL, NULL, NULL, NULL);
   } else {
     GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);
@@ -16802,33 +16802,26 @@ NAME_OB '(' STRING_VALUE ')'
   malloc_non_terminal_node(file_node, result->malloc_pool_, T_FILE_SQL_TABLE, 2, $1, $3);
   malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, 2, file_node, $5);
 }
-| NAME_OB '(' STRING_VALUE ',' file_sql_arg ')'
+| NAME_OB '(' STRING_VALUE ',' file_sql_args ')'
 {
-  ParseNode *args = NULL;
-  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 1, $5);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, $5);
 }
-| NAME_OB '(' STRING_VALUE ',' file_sql_arg ',' file_sql_arg ')'
-{
-  ParseNode *args = NULL;
-  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 2, $5, $7);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
-}
-| NAME_OB '(' STRING_VALUE ',' file_sql_arg ')' relation_name
+| NAME_OB '(' STRING_VALUE ',' file_sql_args ')' relation_name
 {
   ParseNode *file_node = NULL;
-  ParseNode *args = NULL;
-  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 1, $5);
-  malloc_non_terminal_node(file_node, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
+  malloc_non_terminal_node(file_node, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, $5);
   malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, 2, file_node, $7);
 }
-| NAME_OB '(' STRING_VALUE ',' file_sql_arg ',' file_sql_arg ')' relation_name
+;
+
+file_sql_args:
+file_sql_arg
 {
-  ParseNode *file_node = NULL;
-  ParseNode *args = NULL;
-  malloc_non_terminal_node(args, result->malloc_pool_, T_EXPR_LIST, 2, $5, $7);
-  malloc_non_terminal_node(file_node, result->malloc_pool_, T_FILE_SQL_TABLE, 3, $1, $3, args);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_ALIAS, 2, file_node, $9);
+  malloc_list_node($$, result->malloc_pool_, T_EXPR_LIST, 2, 1, $1);
+}
+| file_sql_args ',' file_sql_arg
+{
+  push_back_list(result->malloc_pool_, result, $$, $1, $3);
 }
 ;
 

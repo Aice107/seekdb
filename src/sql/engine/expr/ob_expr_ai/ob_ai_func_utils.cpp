@@ -1329,6 +1329,14 @@ int ObAIFuncModel::call_completion(ObString &prompt, ObJsonObject *config, ObStr
   } else if (OB_FAIL(complete_provider->get_body(*allocator_, request_model_name, prompt_str, prompt, config, body))) {
   } else if (OB_FAIL(client.send_post(*allocator_, endpoint_info_.get_url(), headers, body, response))) {
   } else if (OB_FAIL(complete_provider->parse_output(*allocator_, response, result_base))) {
+  } else if (OB_ISNULL(result_base)) {
+    ret = OB_INVALID_DATA;
+  } else if (ObJsonNodeType::J_NULL == result_base->json_type()
+             || (ObJsonNodeType::J_STRING == result_base->json_type()
+                 && 0 == static_cast<ObJsonString *>(result_base)->length())) {
+    // the model returned an empty completion: reject it instead of writing an empty value
+    ret = OB_INVALID_DATA;
+    LOG_WARN("empty completion response");
   } else if (OB_FAIL(ObAIFuncJsonUtils::print_json_to_str(*allocator_, result_base, result_str))) {
   } else {
     result = result_str;
@@ -1383,6 +1391,14 @@ int ObAIFuncModel::call_completion_vector(ObArray<ObString> &prompts, ObJsonObje
       ObJsonObject *response = response_array[i];
       ObStringBuffer result_buf(allocator_);
       if (OB_FAIL(complete_provider->parse_output(*allocator_, response, result_base))) {
+      } else if (OB_ISNULL(result_base)) {
+        ret = OB_INVALID_DATA;
+      } else if (ObJsonNodeType::J_NULL == result_base->json_type()
+                 || (ObJsonNodeType::J_STRING == result_base->json_type()
+                     && 0 == static_cast<ObJsonString *>(result_base)->length())) {
+        // the model returned an empty completion: reject it instead of writing an empty value
+        ret = OB_INVALID_DATA;
+        LOG_WARN("empty completion response");
       } else if (OB_FAIL(result_base->print(result_buf, 0))) {
       } else {
         results.push_back(result_buf.string());

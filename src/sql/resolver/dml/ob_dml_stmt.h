@@ -18,6 +18,7 @@
 #define OCEANBASE_SQL_STMT_H_
 #include "data_plane/access/ob_tablet_scan.h"
 #include "sql/resolver/expr/ob_raw_expr.h"
+#include "sql/engine/file/ob_file_scan_utils.h"
 #include "lib/string/ob_string.h"
 #include "lib/utility/ob_mod_define.h"
 #include "lib/allocator/ob_allocator.h"
@@ -129,6 +130,33 @@ struct ObValuesTableDef {
                        K(access_type_), K(is_const_), K(column_types_));
 };
 
+// Resolver side metadata of a file table function (read_csv / read_json / read_parquet / glob).
+// Only the inferred schema is kept here, no file data row is materialized.
+struct ObFileTableDef
+{
+  ObFileTableDef()
+    : file_path_(),
+      format_(OB_FILE_SQL_CSV),
+      column_names_(),
+      column_types_(),
+      column_nullable_(),
+      column_max_len_(),
+      est_rows_(0),
+      csv_options_(),
+      file_info_() {}
+  common::ObString file_path_;
+  ObFileSqlFormat format_;
+  common::ObSEArray<common::ObString, 16> column_names_;
+  // storage type (ObObjType as int32) of every file column
+  common::ObSEArray<int32_t, 16> column_types_;
+  common::ObSEArray<int32_t, 16> column_nullable_;
+  common::ObSEArray<int64_t, 16> column_max_len_;
+  int64_t est_rows_;
+  ObFileSqlCsvOptions csv_options_;
+  ObFileSqlFileInfo file_info_;
+  TO_STRING_KV(K_(file_path), K_(format), K_(column_names), K_(est_rows));
+};
+
 struct TableItem
 {
   TableItem()
@@ -153,6 +181,7 @@ struct TableItem
     ddl_schema_version_ = 0;
     ddl_table_id_ = common::OB_INVALID_ID;
     json_table_def_ = nullptr;
+    file_table_def_ = nullptr;
     table_type_ = MAX_TABLE_TYPE;
     values_table_def_ = NULL;
     sample_info_ = nullptr;
@@ -190,6 +219,7 @@ struct TableItem
     JSON_TABLE,
     VALUES_TABLE,
     LATERAL_TABLE,
+    FILE_TABLE,
   };
 
   /**
@@ -224,6 +254,7 @@ struct TableItem
   bool is_function_table() const { return FUNCTION_TABLE == type_; }
   bool is_json_table() const { return JSON_TABLE == type_; }  // json_table_def_->table_type_ == MulModeTableType::OB_ORA_JSON_TABLE_TYPE
   bool is_values_table() const { return VALUES_TABLE == type_; }//used to mark values statement: values row(1,2), row(3,4);
+  bool is_file_table() const { return FILE_TABLE == type_; }
 
   bool is_lateral_table() const { return LATERAL_TABLE == type_; }
   bool is_extended_all_or_user_sys_view() const
@@ -259,6 +290,9 @@ struct TableItem
   }
 
   ObJsonTableDef* get_json_table_def() { return json_table_def_; }
+  ObFileTableDef* get_file_table_def() { return file_table_def_; }
+  const ObFileTableDef* get_file_table_def() const { return file_table_def_; }
+  int deep_copy_file_table_def(const ObFileTableDef &def, ObIAllocator *allocator);
   int deep_copy_json_table_def(const ObJsonTableDef& jt_def, ObIRawExprCopier &expr_copier, ObIAllocator* allocator);
   int deep_copy_values_table_def(const ObValuesTableDef& table_def,
                                  ObIRawExprCopier &expr_copier,
@@ -301,6 +335,8 @@ struct TableItem
   common::ObSEArray<ObExecParamRawExpr*, 4, common::ModulePageAllocator, true> exec_params_;
   // json table
   ObJsonTableDef *json_table_def_;
+  // file table (read_csv / read_json / read_parquet / glob)
+  ObFileTableDef *file_table_def_;
   // values table
   ObValuesTableDef *values_table_def_;
   // sample scan infos

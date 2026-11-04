@@ -99,6 +99,7 @@ private:
   int replace_column_to_default(ObRawExpr *&origin);
   int resolve_insert_constraint();
   int check_view_insertable();
+  int check_ai_column_result_assignment();
   int check_insert_select_field(ObInsertStmt &insert_stmt,
                                 ObSelectStmt &select_stmt,
                                 bool is_mock = false);
@@ -118,6 +119,8 @@ private:
   ObSelectResolver *sub_select_resolver_;
   bool autoinc_col_added_;
   bool is_mock_;
+  // true when the statement lists the target columns explicitly
+  bool has_explicit_insert_columns_;
 };
 }  // namespace sql
 }  // namespace oceanbase

@@ -1654,6 +1654,9 @@ int ObSelectResolver::expand_target_list(
   } else if (table_item.is_json_table()) {
     if (OB_FAIL(resolve_all_json_table_columns(table_item, &column_items))) {
     }
+  } else if (table_item.is_file_table()) {
+    if (OB_FAIL(resolve_all_file_table_columns(table_item, &column_items))) {
+    }
   } else if (table_item.is_values_table()) {
     if (OB_ISNULL(get_stmt()) || OB_UNLIKELY(get_stmt()->get_column_size() == 0)) {
       ret = OB_ERR_UNEXPECTED;
@@ -1843,6 +1846,29 @@ int ObSelectResolver::resolve_all_json_table_columns(
   if (OB_ISNULL(column_items)) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(resolve_json_table_column_all_items(table_item, *column_items))) {
+  }
+  return ret;
+}
+
+int ObSelectResolver::resolve_all_file_table_columns(
+  const TableItem &table_item, ObIArray<ColumnItem> *column_items)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<ObColumnRefRawExpr *, 16> column_exprs;
+  if (OB_ISNULL(column_items) || OB_ISNULL(get_stmt()) || OB_ISNULL(table_item.file_table_def_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(get_stmt()->get_column_exprs(table_item.table_id_, column_exprs))) {
+  } else {
+    for (int64_t i = 0; OB_SUCC(ret) && i < column_exprs.count(); ++i) {
+      ColumnItem *column_item = NULL;
+      if (OB_ISNULL(column_exprs.at(i))) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_ISNULL(column_item = get_stmt()->get_column_item(
+                               table_item.table_id_, column_exprs.at(i)->get_column_id()))) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (OB_FAIL(column_items->push_back(*column_item))) {
+      }
+    }
   }
   return ret;
 }

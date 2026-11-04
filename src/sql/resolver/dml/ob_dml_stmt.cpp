@@ -158,6 +158,33 @@ int TableItem::deep_copy_json_table_def(const ObJsonTableDef& jt_def, ObIRawExpr
   return ret;
 }
 
+int TableItem::deep_copy_file_table_def(const ObFileTableDef &def, ObIAllocator *allocator)
+{
+  int ret = OB_SUCCESS;
+  ObFileTableDef *copy = NULL;
+  if (OB_ISNULL(allocator)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_ISNULL(copy = static_cast<ObFileTableDef *>(
+                         allocator->alloc(sizeof(ObFileTableDef))))) {
+    ret = OB_ALLOCATE_MEMORY_FAILED;
+  } else {
+    copy = new (copy) ObFileTableDef();
+    if (OB_FAIL(ob_write_string(*allocator, def.file_path_, copy->file_path_))) {
+    } else if (OB_FAIL(copy->column_names_.assign(def.column_names_))) {
+    } else if (OB_FAIL(copy->column_types_.assign(def.column_types_))) {
+    } else if (OB_FAIL(copy->column_nullable_.assign(def.column_nullable_))) {
+    } else if (OB_FAIL(copy->column_max_len_.assign(def.column_max_len_))) {
+    } else {
+      copy->format_ = def.format_;
+      copy->est_rows_ = def.est_rows_;
+      copy->csv_options_ = def.csv_options_;
+      copy->file_info_ = def.file_info_;
+      file_table_def_ = copy;
+    }
+  }
+  return ret;
+}
+
 int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
                          const TableItem &other,
                          ObIAllocator* allocator)
@@ -194,6 +221,8 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
   } else if (OB_FAIL(part_names_.assign(other.part_names_))) {
   } else if (is_values_table() &&
              OB_FAIL(deep_copy_values_table_def(*other.values_table_def_, expr_copier, allocator))) {
+  } else if (is_file_table() &&
+             OB_FAIL(deep_copy_file_table_def(*other.file_table_def_, allocator))) {
   } else { /* do nothing */ }
   if (OB_SUCC(ret)) {
     if (OB_ISNULL(other.sample_info_)) {
@@ -1558,6 +1587,7 @@ int ObDMLStmt::formalize_stmt_expr_reference(ObRawExprFactory *expr_factory,
       } else if (table_item->is_function_table() ||
                  table_item->is_json_table() ||
                  table_item->for_update_ ||
+                 table_item->is_file_table() ||
                  table_item->is_values_table()) {
         if (OB_FAIL(set_sharable_expr_reference(*column_item.expr_, ExplicitedRefType::REF_BY_NORMAL))) {
         } else if (table_item->is_json_table()) {
